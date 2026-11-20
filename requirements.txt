@@ -1,0 +1,17 @@
+# PCB 缺陷检测本地 Web 服务 —— 运行依赖
+#
+# 安装（进到本目录后执行）：
+#   pip install -r requirements.txt
+#
+# 若官方源慢/不通，用国内镜像：
+#   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#
+# 注意：ultralytics 会自动带上 torch。如果你要 GPU 版 torch，
+# 先单独装 CUDA 版（见 README），再装本文件。
+
+ultralytics>=8.3
+flask>=3.0
+gradio>=4.44
+opencv-python>=4.9
+pandas>=2.0
+numpy>=1.24,<3

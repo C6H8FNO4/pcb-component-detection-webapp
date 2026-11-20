@@ -1,0 +1,31 @@
+{
+  "_说明": "网页端模型的展示名与阈值。权重文件放在同级目录，扩充模型时改这里即可，不用动代码。",
+  "solder": {
+    "label": "焊接 / 装配缺陷（YOLO26m · 9 类 · imgsz 800）",
+    "global": 0.228,
+    "per_class": {
+      "insufficient_solder": 0.297,
+      "excess_solder": 0.349,
+      "solder_bridge": 0.417,
+      "solder_void": 0.249,
+      "missing_component": 0.381,
+      "shifted_component": 0.389,
+      "burn": 0.224,
+      "physical_damage": 0.214,
+      "oxidation": 0.228
+    }
+  },
+  "bare": {
+    "label": "裸板缺陷（YOLO26s · 7 类 · imgsz 1024）",
+    "global": 0.465,
+    "per_class": {
+      "missing_hole": 0.745,
+      "mouse_bite": 0.484,
+      "open_circuit": 0.77,
+      "short": 0.406,
+      "spur": 0.382,
+      "spurious_copper": 0.33,
+      "pin_hole": 0.571
+    }
+  }
+}

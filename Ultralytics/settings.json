@@ -1,0 +1,19 @@
+{
+  "settings_version": "0.0.8",
+  "datasets_dir": "C:\\Users\\yuzij\\Documents\\app\\webapp\\datasets",
+  "weights_dir": "weights",
+  "runs_dir": "runs",
+  "uuid": "522f303f825b7f7d5f6975c14b83f0aff1c92df6243291858b8a97a6fd3123b1",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "mlflow": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

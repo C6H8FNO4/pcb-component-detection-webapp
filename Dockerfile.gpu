@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# PCB 缺陷检测 Web 服务 —— GPU 版镜像（可选）
+#
+# 前提：宿主机有 NVIDIA 驱动 + nvidia-container-toolkit；
+#       启动时加 --gpus all（compose 里用 deploy.resources 声明）。
+# 构建：docker build -f Dockerfile.gpu -t pcb-defect-web:gpu .
+# 运行：docker run -d --gpus all -p 8000:8000 pcb-defect-web:gpu
+#
+# 与 CPU 版唯一区别：基础镜像自带 CUDA，torch 换成 cu124 版，
+# 推理从 ~60ms 降到个位数毫秒（3050 这类 4GB 卡足够）。
+# 代价：镜像从 ~2 GB 涨到 ~6–8 GB。
+# ---------------------------------------------------------------------------
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    YOLO_CONFIG_DIR=/app/.ultralytics \
+    MPLBACKEND=Agg
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 基础镜像已带 torch(CUDA)，只需装 ultralytics 与 web 层
+RUN pip install --no-cache-dir "ultralytics==8.4.215" flask gunicorn
+
+COPY app_flask.py ./
+COPY templates ./templates
+COPY models ./models
+
+RUN useradd -m -u 1000 appuser \
+ && mkdir -p /app/.ultralytics \
+ && chown -R appuser:appuser /app
+USER appuser
+
+ENV PCB_WEIGHTS=/app/models/best.pt \
+    PCB_HOST=0.0.0.0 \
+    PCB_PORT=8000 \
+    NVIDIA_VISIBLE_DEVICES=all
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/',timeout=3).status==200 else 1)"
+
+CMD ["gunicorn", "app_flask:app", \
+     "--workers", "1", \
+     "--worker-class", "gthread", \
+     "--threads", "4", \
+     "--timeout", "120", \
+     "--bind", "0.0.0.0:8000", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-"]

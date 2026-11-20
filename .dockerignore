@@ -1,0 +1,23 @@
+# 构建上下文 = webapp/ 目录，只把镜像真正需要的文件送进去
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 本地运行产物
+.ultralytics/
+torchinductor_*/
+runs/
+.venv/
+venv*/
+
+# 桌面/本地脚本，容器里用不到
+start.bat
+open_browser.py
+app_gradio.py
+infer_cli.py
+
+# 文档与演示文件
+*.md
+demo_web_result.jpg
+
+# 不要匹配 models/ —— 权重必须进镜像

@@ -1,0 +1,49 @@
+# docker compose up -d --build     启动
+# docker compose logs -f           看日志
+# docker compose down              停止
+
+services:
+  pcb-web:
+    build: .
+    image: pcb-defect-web:latest
+    container_name: pcb-defect-web
+    ports:
+      - "8000:8000"          # 宿主机:容器。改左边即可换对外端口
+    environment:
+      PCB_WEIGHTS: /app/models/best.pt
+      PCB_HOST: 0.0.0.0
+      PCB_PORT: "8000"
+    volumes:
+      # 模型挂载成只读：想换权重直接替换 ./models/best.pt 再 restart，
+      # 不用重新 build 镜像。不需要热替换可以删掉这两行。
+      - ./models:/app/models:ro
+    restart: unless-stopped
+    # ---- 资源限制（按需打开；n 级模型 640 实测 CPU 单张 ~60ms）----
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "2"
+    #       memory: 2g
+
+  # ---------------------------------------------------------------------
+  # 可选：如果你要 GPU，删掉上面那个服务、启用下面这个，
+  # 并确保宿主机装了 NVIDIA 驱动 + nvidia-container-toolkit。
+  # ---------------------------------------------------------------------
+  # pcb-web-gpu:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.gpu
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     PCB_WEIGHTS: /app/models/best.pt
+  #   volumes:
+  #     - ./models:/app/models:ro
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   restart: unless-stopped
