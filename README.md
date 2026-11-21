@@ -173,9 +173,21 @@ docker run -d -p 8000:8000 --name pcb-web pcb-defect-web
 | `backends` | 逗号分隔，例 `cpu` 或 `cpu,cu126`（可选 cpu / cu128 / cu126 / cu124 / cu121） |
 | `build_windows_portable` | 是否打 Windows 便携包 |
 | `build_docker` | 是否构建 Docker 镜像（CPU + CUDA） |
+| `release_tag` | 发布到哪个 Release（留空 = `latest-build` 滚动包） |
+
+**构建产物会自动发到 Release：**
+
+| 触发方式 | 发布到 |
+|---|---|
+| 打 tag（`v*`） | 该 tag 的 Release（不存在则创建） |
+| 手动触发，填了 `release_tag` | 指定的 Release |
+| 手动触发，`release_tag` 留空 | `latest-build` 预发布包，**每次运行覆盖同名文件**（`gh release upload --clobber`） |
+
+也就是说：点一次 Run workflow，产物几十分钟后就能直接在 Releases 页面下载，不需要自己打 tag。
+滚动包适合"最新构建随手可取"，正式版本仍建议用 tag 发。
 
 **打 tag 自动触发**：`git tag v1.0.1 && git push origin v1.0.1` →
-跑冒烟测试，并把便携包自动附到该 Release。
+跑冒烟测试 → 打包 → 自动附到这个 tag 的 Release。
 
 ### 任务划分
 

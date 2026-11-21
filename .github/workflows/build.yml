@@ -23,6 +23,10 @@ on:
         description: '构建 Docker 镜像（CPU + CUDA）'
         type: boolean
         default: false
+      release_tag:
+        description: '发布到的 Release tag（留空 = latest-build 滚动包，同一个 tag 反复覆盖）'
+        required: false
+        default: ''
   push:
     tags: ['v*']
 
@@ -126,12 +130,43 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-      - name: 附到 Release（仅 tag 触发）
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
-        with:
-          files: dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip
-          fail_on_unmatched_files: true
+      - name: 发布到 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          WANT_TAG: ${{ github.event.inputs.release_tag }}
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ]; then
+            TAG="$REF_NAME"
+            PRE=""
+            TITLE="$REF_NAME 便携版"
+            NOTES="由 tag \`$REF_NAME\` 构建（commit ${GITHUB_SHA:0:7}）。"
+          elif [ -n "${WANT_TAG:-}" ]; then
+            TAG="$WANT_TAG"
+            PRE=""
+            TITLE="$WANT_TAG 便携版"
+            NOTES="由 Actions run #$RUN_NUMBER 构建（commit ${GITHUB_SHA:0:7}）。"
+          else
+            TAG="latest-build"
+            PRE="--prerelease"
+            TITLE="latest-build · 滚动构建"
+            NOTES="手动触发的最新构建，每次运行覆盖同名文件。run #$RUN_NUMBER（commit ${GITHUB_SHA:0:7}）。"
+          fi
+
+          echo "发布到 Release: $TAG"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TITLE" --notes "$NOTES" $PRE
+          fi
+
+          FILE="dist/pcb-webapp-portable-win64-${BACKEND}.zip"
+          ls -lh "$FILE"
+          gh release upload "$TAG" "$FILE" --clobber
+          echo "已上传: $(basename "$FILE")"
 
   # ---------------------------------------------------------------- Docker 镜像
   docker:
