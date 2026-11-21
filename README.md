@@ -162,6 +162,44 @@ docker run -d -p 8000:8000 --name pcb-web pcb-defect-web
 
 ---
 
+## 自动化构建（GitHub Actions）
+
+`.github/workflows/build.yml` 按「系统 × GPU 后端」矩阵构建。
+
+**手动触发**（Actions → build → Run workflow）：
+
+| 参数 | 说明 |
+|---|---|
+| `backends` | 逗号分隔，例 `cpu` 或 `cpu,cu126`（可选 cpu / cu128 / cu126 / cu124 / cu121） |
+| `build_windows_portable` | 是否打 Windows 便携包 |
+| `build_docker` | 是否构建 Docker 镜像（CPU + CUDA） |
+
+**打 tag 自动触发**：`git tag v1.0.1 && git push origin v1.0.1` →
+跑冒烟测试，并把便携包自动附到该 Release。
+
+### 任务划分
+
+| Job | 内容 |
+|---|---|
+| `prepare` | 解析输入，生成矩阵（OS × 后端） |
+| `smoke` | Windows + Linux × 每个后端：装对应 torch → `tools/smoke_test.py`（加载两个模型并推理一次） |
+| `portable-windows` | `tools/make_portable.ps1` 打便携包 → artifact（保留 3 天）+ tag 时附 Release |
+| `docker` | 构建 CPU / CUDA 两个镜像并导出 `tar.gz` artifact |
+
+### 体积与配额提醒
+
+| 产物 | 体积 |
+|---|---|
+| 便携包（cpu） | ~440 MB |
+| 便携包（cu126 / cu124） | **2–3 GB** |
+| Docker 镜像 tar.gz（cpu / cuda） | ~1.3 GB / ~7 GB |
+
+GitHub 私有仓库的 **artifact 存储免费额度只有 500 MB**，CUDA 产物会很快超限。
+建议：CPU 包走 Release 资产（不占 artifact 配额），CUDA 版按需本地构建或只依赖
+`install-gpu.ps1` 在线安装。工作流里 artifact 只保留 3 天，就是为了控制占用。
+
+---
+
 ## 已知限制
 
 - `solder_void` 容易与 `insufficient_solder` 混淆；`burn` 召回偏低（约 62%）；暗光照片效果下降（模型卡自述）

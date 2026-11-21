@@ -1,0 +1,2 @@
+backends=["cpu", "cu124"]
+smoke_matrix={"include": [{"os": "windows-latest", "backend": "cpu"}, {"os": "windows-latest", "backend": "cu124"}, {"os": "ubuntu-latest", "backend": "cpu"}, {"os": "ubuntu-latest", "backend": "cu124"}]}

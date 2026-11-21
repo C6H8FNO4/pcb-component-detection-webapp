@@ -1,0 +1,179 @@
+name: build
+
+# 按「系统 × GPU 后端」矩阵构建：
+#   · 冒烟测试：Windows / Linux × 每个后端，确保模型能加载并推理
+#   · Windows 便携包：python-embed + 预装依赖 + 模型，解压即用
+#   · Docker 镜像：CPU 与 CUDA 两版（手动触发）
+#
+# 手动触发时可选后端，例如 "cpu,cu126,cu124"。
+# 打 tag（v*）会自动跑冒烟测试，并把便携包附到 GitHub Release。
+
+on:
+  workflow_dispatch:
+    inputs:
+      backends:
+        description: 'PyTorch 后端，逗号分隔：cpu / cu128 / cu126 / cu124 / cu121'
+        required: true
+        default: 'cpu'
+      build_windows_portable:
+        description: '构建 Windows 便携包（CUDA 版体积可达 2–3 GB）'
+        type: boolean
+        default: true
+      build_docker:
+        description: '构建 Docker 镜像（CPU + CUDA）'
+        type: boolean
+        default: false
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------- 生成矩阵
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      backends: ${{ steps.m.outputs.backends }}
+      smoke_matrix: ${{ steps.m.outputs.smoke_matrix }}
+    steps:
+      - id: m
+        env:
+          RAW: ${{ github.event.inputs.backends }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+
+          raw = (os.environ.get("RAW") or "cpu").replace(" ", "")
+          backends = [b for b in raw.split(",") if b]
+          if not backends:
+              backends = ["cpu"]
+
+          smoke = {"include": [
+              {"os": os_name, "backend": b}
+              for os_name in ("windows-latest", "ubuntu-latest")
+              for b in backends
+          ]}
+
+          path = os.environ["GITHUB_OUTPUT"]
+          with open(path, "a", encoding="utf-8") as f:
+              f.write("backends=" + json.dumps(backends) + "\n")
+              f.write("smoke_matrix=" + json.dumps(smoke) + "\n")
+
+          print("后端:", backends)
+          print("冒烟矩阵:", json.dumps(smoke, ensure_ascii=False))
+          PY
+
+  # ---------------------------------------------------------------- 冒烟测试
+  smoke:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.smoke_matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    name: smoke / ${{ matrix.os }} / ${{ matrix.backend }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 安装 PyTorch（${{ matrix.backend }}）
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --timeout 60 --retries 3 \
+            torch torchvision --index-url https://download.pytorch.org/whl/${{ matrix.backend }}
+          python -m pip install --timeout 60 --retries 3 -r requirements.txt
+
+      - name: 冒烟测试
+        run: |
+          python -c "import torch;print('torch',torch.__version__,'| cuda',torch.cuda.is_available())"
+          python tools/smoke_test.py
+
+  # ---------------------------------------------------------------- Windows 便携包
+  portable-windows:
+    needs: [prepare, smoke]
+    if: ${{ github.event_name == 'push' || inputs.build_windows_portable }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: ${{ fromJSON(needs.prepare.outputs.backends) }}
+    name: portable / win64 / ${{ matrix.backend }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 打包便携版
+        shell: pwsh
+        run: |
+          ./tools/make_portable.ps1 `
+            -TorchIndex "https://download.pytorch.org/whl/${{ matrix.backend }}" `
+            -OutFile "dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip"
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-win64-${{ matrix.backend }}
+          path: dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: 附到 Release（仅 tag 触发）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip
+          fail_on_unmatched_files: true
+
+  # ---------------------------------------------------------------- Docker 镜像
+  docker:
+    needs: [prepare]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_docker }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cpu
+            dockerfile: Dockerfile
+          - name: cu124
+            dockerfile: Dockerfile.gpu
+    name: docker / ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          load: true
+          push: false
+          tags: pcb-webapp:${{ matrix.name }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: 导出镜像为 tar.gz
+        run: |
+          docker images pcb-webapp:${{ matrix.name }}
+          docker save pcb-webapp:${{ matrix.name }} | gzip -9 > pcb-webapp-${{ matrix.name }}.tar.gz
+          ls -lh pcb-webapp-${{ matrix.name }}.tar.gz
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-${{ matrix.name }}
+          path: pcb-webapp-${{ matrix.name }}.tar.gz
+          retention-days: 3
+          if-no-files-found: error
