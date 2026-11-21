@@ -1,199 +1,169 @@
-# PCB 缺陷检测 —— 本地部署说明
+# PCB 缺陷检测 · Web 服务
 
-用 `best.pt`（YOLO26n，6 类 PCB 缺陷）做一个**本地网页**：浏览器上传图片 → 自动标注 → 看明细 / 导 CSV。
+本地运行的 PCB 缺陷检测网页：浏览器上传图片或抓取实时画面 → 自动标注 → 出明细表 / CSV。
+推理在本机 CPU（或 GPU）上跑，不依赖任何云服务。
 
-6 类：`missing_hole` 缺孔 · `mouse_bite` 鼠咬 · `open_circuit` 开路 · `short` 短路 · `spur` 毛刺 · `spurious_copper` 余铜
+支持两个模型，页面右上角切换：
 
----
-
-## 1. 目录内容
-
-```
-webapp/
-├─ app_flask.py        ← 推荐：真网页（上传/拖拽/表格/导CSV），带 JSON 接口
-├─ templates/
-│  └─ index.html       ← 页面（纯原生 JS，不依赖任何国外 CDN）
-├─ app_gradio.py       ← 备选：Gradio 版，代码更短，适合快速验证
-├─ infer_cli.py        ← 批处理：单图/整目录 → 框图 + JSON，不启服务
-├─ requirements.txt
-└─ README.md
-```
-
-模型默认路径是 `../pcb_defect_yolo26n_zip/pcb_defect_yolo26n/weights/best.pt`，
-想换位置就设环境变量 `PCB_WEIGHTS`，或改 `app_flask.py` 顶部的 `WEIGHTS`。
+| 键名 | 模型 | 类别数 | imgsz |
+|---|---|---|---|
+| `solder` | YOLO26m 焊接/装配缺陷 | 9 | 800 |
+| `bare` | YOLO26s 裸板缺陷 | 7 | 1024 |
 
 ---
 
-## 2. 装环境（只做一次）
+## 快速开始
 
-> ⚠️ **本机现在出站 HTTPS 是断的**（DNS 被解析到 `198.18.0.250`，TLS 握手失败），
-> `pip install` 会卡住。装之前先解决网络（关掉/修好代理，或换台能上网的机器）。
+### 方式一：便携包（零安装）
 
-**Python 必须是 3.10 / 3.11**（本机默认的 3.14 装不了 torch）。
+从 [Releases](https://github.com/C6H8FNO4/pcb-component-detection-webapp/releases) 下载
+`pcb-webapp-portable-win64.zip`（约 442 MB），解压后双击 `启动.bat`。
+
+- 内含便携 Python 3.10 + 全部依赖 + 两个模型
+- 不需要装 Python、不需要联网
+- Windows 10/11 x64
+
+### 方式二：脚本安装（可选 GPU）
 
 ```powershell
-cd C:\Users\yuzij\Documents\app\webapp
-"C:\Program Files\Python310\python.exe" -m venv ..\venv310
-..\venv310\Scripts\activate
+.\install-gpu.ps1          # 菜单：CPU / CUDA 12.1 / 12.4 / 12.6 / 12.8
+```
 
-# 有 NVIDIA 卡（RTX 3050 4GB）：装 CUDA 版 torch
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-# 没有卡就装 CPU 版：pip install torch torchvision
+脚本会探测显卡与驱动（`nvidia-smi`）、按驱动版本推荐 CUDA、建虚拟环境、装对应 torch、
+失败自动切清华镜像、自检 `torch.cuda.is_available()`，最后检查模型并启动。
 
+```powershell
+.\install-gpu.ps1 -Backend cu124            # 跳过菜单
+.\install-gpu.ps1 -Backend cpu -Mirror      # CPU + 国内镜像
+.\install-gpu.ps1 -Backend cpu -SkipDeps    # 环境已就绪，只做检查
+```
+
+Linux / macOS：`bash install-gpu.sh`（同样的参数）。
+
+### 方式三：手动
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
+.venv\Scripts\python.exe app_flask.py
 ```
 
-网络慢就用镜像：
-
-```powershell
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-```
-
-验证：
-
-```powershell
-python -c "import torch, ultralytics; print(torch.__version__, torch.cuda.is_available())"
-```
+打开 <http://127.0.0.1:8000>。Windows 上也可以直接双击 `start.bat`。
 
 ---
 
-## 3. 启动网页
+## 界面功能
 
-**最省事：双击 `start.bat`** —— 自动检查环境、启动服务、等端口就绪后自动打开浏览器。
-关闭那个黑窗口 = 停止服务。
+### 单张检测
 
-```
-双击 start.bat
-→ 本机浏览器自动打开 http://127.0.0.1:8000/
-→ 同窗口会打印「局域网访问: http://192.168.x.x:8000/」
-```
+拖拽或选择图片 → 标注图 + 类别计数 + 每个框的类别/置信度/像素坐标 → 可导出 CSV。
+「按类别推荐阈值」勾选时使用每个类别的模型卡阈值，取消后可手动拖统一阈值。
 
-可选环境变量（cmd 里 `set PCB_PORT=8080` 后再双击，或用命令行跑）：
+### 实时检测
 
-| 变量 | 作用 |
+两种画面来源：
+
+- **摄像头**：`getUserMedia`
+- **抓取窗口 / 屏幕**：`getDisplayMedia` —— 适合把显微镜软件、相机软件、产线画面的窗口直接丢进来检测
+
+显示与推理解耦：每帧立即显示并叠加「上一次的检测结果」，推理在独立请求里跑，
+上一帧没算完就跳过采集，不排队。HUD 显示 `检测帧率 / 单帧推理耗时 / 帧尺寸 / 缺陷数`。
+
+还带一个 **自测** 按钮：用合成画面跑完整链路，不需要摄像头，用来验证服务是否正常。
+
+> ⚠️ 摄像头与屏幕抓取需要**安全上下文**：`http://127.0.0.1` 可以，
+> 通过局域网 IP 用 `http://` 访问会被浏览器拒绝（需 https）。单张检测不受此限制。
+
+---
+
+## API
+
+| 接口 | 说明 |
 |---|---|
-| `PCB_PORT=8080` | 换端口 |
-| `PCB_NO_BROWSER=1` | 只起服务，不自动开浏览器（做开机自启时用） |
-| `PCB_HOST=127.0.0.1` | 只允许本机访问 |
-
-手动启动（等价于双击）：
-
-```powershell
-python app_flask.py
-```
-
-浏览器打开 <http://127.0.0.1:8000> ，拖图片进去、点「开始检测」。
-
-- 想让**局域网其它电脑/手机**访问：默认已经监听 `0.0.0.0`，
-  用 `http://<本机IP>:8000` 即可（Windows 防火墙要放行 8000 端口，见第 6 节）。
-- 只想快速看效果：`python app_gradio.py` → <http://127.0.0.1:7860>
-
-> ⚠️ **`start.bat` 里只能写 ASCII 字符**。在 .bat 里塞中文（UTF-8 多字节）会让 cmd
-> 按字节读行时错位，出现 `'CB' is not recognized...` 这类莫名其妙的报错，
-> 后面的命令还会被静默跳过。中文提示一律交给 Python 输出。
-
----
-
-## 4. 批处理（不进网页，直接跑一批图）
-
-```powershell
-python infer_cli.py D:\pcb_images\                    # 整目录
-python infer_cli.py D:\pcb_images\a.jpg --conf 0.2    # 单张，降阈值
-python infer_cli.py D:\pcb_images\ --json             # 只吐 JSON 给别的程序用
-```
-
-每张图旁边生成 `xxx_pred.jpg`（画框图）和 `xxx.json`（框坐标+置信度）。
-
----
-
-## 5. 接口（给你的系统对接）
+| `GET /api/models` | 列出可用模型、类别、阈值、imgsz |
+| `POST /api/predict` | 检测并返回**带标注的图片**（base64）+ 明细，单张用 |
+| `POST /api/detect` | 只返回 JSON（框坐标），供前端自己画，实时用 |
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/predict -F "file=@a.jpg" -F "conf=0.25" -F "iou=0.7"
+curl -X POST http://127.0.0.1:8000/api/predict \
+     -F "file=@board.jpg" -F "model=solder" -F "iou=0.45"
 ```
 
-```json
-{
-  "ok": true,
-  "count": 2,
-  "image": "data:image/jpeg;base64,...",
-  "detections": [
-    {"cls": 0, "name": "missing_hole", "cn": "缺孔", "conf": 0.8231,
-     "xyxy": [412.5, 180.0, 460.2, 232.7], "w": 47.7, "h": 52.7}
-  ],
-  "summary": "共 2 个缺陷：missing_hole(缺孔)×1，short(短路)×1",
-  "size": {"w": 1920, "h": 1080}
-}
-```
-
-坐标是**原图像素坐标**（左上 x1,y1，右下 x2,y2），可以直接拿来画到你的原图上。
+`conf` 不传 → 用逐类推荐阈值；传了 → 统一阈值覆盖。
 
 ---
 
-## 6. 上线/长期运行的注意点
+## 模型与阈值
 
-- **别用 `flask run --debug`**，也别开多 worker：每个进程都会加载一份模型，4GB 显存会被吃光。
-  生产建议 `waitress-serve --port=8000 app_flask:app`（Windows 友好，单进程多线程）。
-- 模型在进程启动时加载一次并常驻，单张推理不用重建。
-- 4GB 显存下 `imgsz=640` 稳定；`imgsz=1280` 想用的话先压 `conf` 并实测显存。
-- 现场产线要做「多相机并发」时，改成「图像队列 + 单推理线程」，别让 HTTP 线程直接抢 GPU。
+```
+models/
+├─ solder_yolo26m_800.onnx    78 MB   9 类，imgsz 800
+├─ bare_yolo26s_1024.onnx     37 MB   7 类，imgsz 1024
+├─ models.json                       展示名与逐类阈值
+└─ README.md                         权重来源与导出方法
+```
+
+逐类阈值来自各自的模型卡（val 上 F1 最优点）：
+
+| solder（9 类） | | bare（7 类） | |
+|---|---|---|---|
+| 少锡 | 0.297 | 缺孔 | 0.745 |
+| 多锡 | 0.349 | 鼠咬 | 0.484 |
+| 连锡 | 0.417 | 开路 | 0.770 |
+| 空洞 | 0.249 | 短路 | 0.406 |
+| 缺件 | 0.381 | 毛刺 | 0.382 |
+| 偏移 | 0.389 | 余铜 | 0.330 |
+| 烧焦 | 0.224 | 针孔 | 0.571 |
+| 损伤 | 0.214 | | |
+| 氧化 | 0.228 | | |
+
+**加模型不用改代码**：把 ONNX 放进 `models/`，在 `models.json` 里加一段 `label` / `global` / `per_class`，
+前端下拉框自动出现。类别名和输入尺寸从 ONNX 元数据读取。文件名以 `_640` / `_320` / `_int8`
+结尾的视为备用导出，不会被列出。
 
 ---
 
-## 7. Docker 部署（推荐给"换台机器/上服务器"）
+## 配置
 
-本机双击 `start.bat` 和 Docker 二选一即可。Docker 的好处：换任何装了 Docker 的机器
-（Linux 服务器、NAS、云主机）都能一条命令跑起来，不用管 Python 版本和依赖。
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `PCB_HOST` | `0.0.0.0` | 监听地址，改 `127.0.0.1` 只允许本机 |
+| `PCB_PORT` | `8000` | 端口 |
+| `PCB_MODEL_DIR` | `./models` | 模型目录 |
+| `PCB_PRELOAD` | `1` | 启动时后台预热模型（关掉则首次请求慢） |
 
-```bash
-cd webapp
+前端可调：`templates/index.html` 里 `live.maxDim`（抓帧长边，默认 1600）、JPEG 质量（0.85）。
 
-# 1) 构建（首次约 3–8 分钟，主要在下 torch；镜像约 1.5–2 GB）
-docker build -t pcb-defect-web:latest .
+---
 
-# 2) 运行
-docker run -d --name pcb-web -p 8000:8000 --restart unless-stopped pcb-defect-web:latest
+## 性能参考（CPU，i5-11400H）
 
-# 3) 看状态 / 日志
-docker ps
-docker logs -f pcb-web
-```
-
-或用 compose（等价，还能顺手改端口/资源限制）：
-
-```bash
-docker compose up -d --build
-docker compose logs -f
-docker compose down
-```
-
-访问 `http://<宿主机IP>:8000`。
-
-**镜像里的几个关键决定：**
-
-| 决定 | 原因 |
+| 项目 | 结果 |
 |---|---|
-| `ultralytics==8.4.215` 钉版本 | 与训练时的版本一致，避免权重结构不兼容 |
-| torch 走 `/whl/cpu` 索引 | 默认会拉 2 GB+ 的 CUDA 包，CPU 版只要 ~200 MB |
-| `gunicorn --workers 1 --threads 4` | **worker 必须是 1**：每个 worker 各加载一份模型，多开只吃内存不提速；并发靠线程 |
-| 非 root 用户运行 | 容器逃逸面更小 |
-| 权重烘进镜像 + 同时挂载 | 镜像自包含；`./models/best.pt` 换成新模型后 `restart` 即可热替换 |
-| `HEALTHCHECK` | 编排系统能判断"模型加载完没有"，而不是进程在就算健康 |
+| solder（imgsz 800） | 单帧 0.45–1.0 s |
+| bare（imgsz 1024） | 单帧 0.5–1.2 s |
+| 整图往返（含编码） | 1.0–1.4 s |
 
-**GPU 版**（可选）：`Dockerfile.gpu` 用 `pytorch/pytorch:*-cuda12.4` 基础镜像，
-镜像会涨到 6–8 GB，单张推理从 ~60 ms 降到个位数毫秒。宿主机需要驱动 +
-nvidia-container-toolkit，运行加 `--gpus all`（compose 里用 `deploy.resources.devices`）。
-
-**注意：**
-- 容器里不要改 `PCB_HOST`，保持 `0.0.0.0`，否则端口映射不进去。
-- 想要多副本横向扩容要先想清楚：每个副本一份模型（CPU 版 ~1 GB 内存/份）。
-- 权重是 AGPL-3.0，镜像对外分发时注意许可义务。
+实时模式的画面是流畅的，但**检测框大约每秒刷新一次**——这是模型计算量决定的。
+要更快只能换小模型或做 int8 量化。
 
 ---
 
-## 8. 提醒（模型本身的边界）
+## Docker
 
-- 训练集是绿色 PCB 板的正视照片；**换光照/换板型/微距镜头要先小批量试**。
-- `spur`（毛刺）是最弱的一类（混淆矩阵对角仅 0.74），漏检偏多；这一类关键就降 `conf` 到 0.15 左右或补样本重训。
-- 背景有约 7–11% 的误报率，纯空板图可能报出 1 个假框。
-- 权重是 **AGPL-3.0**：内部使用没问题，对外商用需评估授权。
+```bash
+docker build -t pcb-defect-web .
+docker run -d -p 8000:8000 --name pcb-web pcb-defect-web
+```
+
+镜像里 `gunicorn` 必须单 worker（每个 worker 都会加载一份模型），并发靠线程。
+
+---
+
+## 已知限制
+
+- `solder_void` 容易与 `insufficient_solder` 混淆；`burn` 召回偏低（约 62%）；暗光照片效果下降（模型卡自述）
+- 实时模式的框刷新受限于推理速度，约 1 次/秒
+- 模型许可为 research-use（数据集来源混合），Ultralytics 为 AGPL-3.0；商用前请确认授权
