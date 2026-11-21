@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -33,7 +34,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 from flask import Flask, jsonify, render_template, request
-from ultralytics import YOLO
+
+# 便携包用的是 python-embed（带 ._pth），该模式下脚本目录不会自动进 sys.path，
+# 显式加入以保证能 import detector_ort（对普通解释器无副作用）。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+from detector_ort import Detector
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = Path(os.environ.get("PCB_MODEL_DIR", BASE_DIR / "models"))
@@ -156,12 +163,20 @@ def discover_models() -> dict[str, dict]:
 
 
 class ModelEntry:
-    """懒加载的模型句柄：真正用到才加载，并在内存里复用。"""
+    """懒加载的模型句柄：真正用到才加载，并在内存里复用。
+
+    用 pure onnxruntime 推理（detector_ort.Detector），不依赖 torch / ultralytics：
+    包体积从 ~1.2 GB 降到 ~150 MB，也不再需要 VC++ 运行库以外的原生依赖。
+    """
 
     def __init__(self, desc: dict):
         self.desc = desc
         self.key = desc["key"]
-        self.model = YOLO(desc["path"])
+        self.model = Detector(
+            desc["path"],
+            per_class=desc.get("per_class"),
+            global_conf=desc.get("global_conf", 0.25),
+        )
         self.lock = threading.Lock()
 
     @property
@@ -169,14 +184,9 @@ class ModelEntry:
         return self.model.names
 
     def predict(self, img, conf: float | None, iou: float, imgsz: int):
-        per_class = self.desc.get("per_class")
-        # 逐类阈值时用最低阈值跑，再按类过滤，避免把低分框提前丢掉
-        run_conf = conf if conf is not None else (
-            min(per_class.values()) if per_class else self.desc["global_conf"])
+        """返回 detector_ort.Result；imgsz 由模型自身决定（ONNX 输入固定）。"""
         with self.lock:
-            res = self.model.predict(img, conf=run_conf, iou=iou,
-                                     imgsz=imgsz, verbose=False)[0]
-        return res
+            return self.model.predict(img, conf=conf, iou=iou)
 
 
 def get_model(key: str) -> ModelEntry:

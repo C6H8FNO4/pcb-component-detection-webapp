@@ -38,6 +38,7 @@ param(
     [string]$OutFile = "",
     [string]$WorkDir = "build_portable",
     [string]$Venv = "",
+    [string]$SitePackages = "",
     [switch]$SkipDeps
 )
 
@@ -62,7 +63,11 @@ if (-not $OutFile) { $OutFile = Join-Path $Root "dist\pcb-webapp-portable-win64.
 Step "准备 Python"
 $venvPyMaybe = if ($Venv) { Join-Path $Venv "Scripts\python.exe" } else { "" }
 
-if ($venvPyMaybe -and (Test-Path $venvPyMaybe)) {
+if ($SitePackages) {
+    $PyVer = "3.10"
+    Ok "跳过 Python 探测（使用预置 site-packages）"
+}
+elseif ($venvPyMaybe -and (Test-Path $venvPyMaybe)) {
     # 已有 venv：直接用它，不用探测系统 Python
     $PyVer = (& $venvPyMaybe -c "import sys;print('%d.%d'%sys.version_info[:2])" 2>$null | Select-Object -First 1)
     $Python = ""
@@ -79,7 +84,7 @@ elseif (-not $Python) {
 } else {
     $PyVer = (& $Python -c "import sys;print('%d.%d'%sys.version_info[:2])" 2>$null | Select-Object -First 1)
 }
-if (-not $Python -and -not ($venvPyMaybe -and (Test-Path $venvPyMaybe))) { Die "找不到 Python 3.10–3.12" }
+if (-not $SitePackages -and -not $Python -and -not ($venvPyMaybe -and (Test-Path $venvPyMaybe))) { Die "找不到 Python 3.10–3.12" }
 if (-not $PyVer) { Die "无法确定 Python 版本" }
 Ok "Python $PyVer"
 if (-not $EMBED.ContainsKey($PyVer)) { Die "没有对应的 python-embed 版本：$PyVer" }
@@ -90,7 +95,9 @@ $venv = if ($Venv) { $Venv } else { Join-Path $work "venv" }
 $venvPy = Join-Path $venv "Scripts\python.exe"
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
-if ($SkipDeps -and (Test-Path $venvPy)) {
+if ($SitePackages) {
+    Ok "使用预置 site-packages: $SitePackages"
+} elseif ($SkipDeps -and (Test-Path $venvPy)) {
     Ok "复用已有 venv（-SkipDeps）"
 } else {
     Step "创建 venv 并安装依赖"
@@ -156,7 +163,7 @@ $pthVer = ($pthName.Name -replace "python", "") -replace "._pth", ""
 Ok "._pth 已配置"
 
 # 复制 site-packages
-$srcSp = Join-Path $venv "Lib\site-packages"
+$srcSp = if ($SitePackages) { $SitePackages } else { Join-Path $venv "Lib\site-packages" }
 $dstSp = Join-Path $pyDir "Lib\site-packages"
 New-Item -ItemType Directory -Force -Path $dstSp | Out-Null
 robocopy $srcSp $dstSp /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
@@ -270,9 +277,13 @@ Ok "使用说明.txt 已写入"
 Step "便携包自检"
 $env:YOLO_CONFIG_DIR = Join-Path $appDir ".ultralytics"
 $env:PCB_NO_BROWSER = "1"
-$out = & (Join-Path $pyDir "python.exe") -c "import torch,ultralytics,flask,cv2;print('torch',torch.__version__);print('cuda',torch.cuda.is_available());print('ultralytics',ultralytics.__version__)" 2>&1
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"   # python 往 stderr 写 warning 时别当致命错误
+$out = & (Join-Path $pyDir "python.exe") -c "import sys,flask,cv2,numpy,onnx,onnxruntime;from importlib.metadata import version as v;print('flask',v('flask'));print('cv2',cv2.__version__);print('numpy',numpy.__version__);print('onnxruntime',onnxruntime.__version__)" 2>&1
+$pyExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
 $out | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-if ($LASTEXITCODE -ne 0) { Die "便携 python 自检失败" }
+if ($pyExit -ne 0) { Die "便携 python 自检失败" }
 Ok "便携 python 可用"
 
 # ---------------------------------------------------------------- 5. 压缩

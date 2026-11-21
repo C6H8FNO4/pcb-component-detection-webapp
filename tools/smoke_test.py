@@ -1,22 +1,27 @@
 """
-冒烟测试：确认两个模型能正常加载并跑通推理。CI 和本地都能用。
+冒烟测试：确认两个模型能正常加载并跑通推理。CI 和本地都能用（不需要 torch）。
 
 用法：
-    python tools/smoke_test.py            # 跑全部模型
-    python tools/smoke_test.py --fast     # 每模型只跑一次推理
+    python tools/smoke_test.py
+    python tools/smoke_test.py --fast
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
-import time
+from pathlib import Path
 
 import numpy as np
-from ultralytics import YOLO
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from detector_ort import Detector  # noqa: E402
 
 MODELS = [
-    ("models/solder_yolo26m_800.onnx", "solder 焊接缺陷 9 类", 800),
-    ("models/bare_yolo26s_1024.onnx", "bare 裸板缺陷 7 类", 1024),
+    ("solder", "models/solder_yolo26m_800.onnx", 800),
+    ("bare", "models/bare_yolo26s_1024.onnx", 1024),
 ]
 
 
@@ -32,37 +37,38 @@ def make_image(w: int = 1280, h: int = 960) -> np.ndarray:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fast", action="store_true")
+    ap.add_argument("--fast", action="store_true", help="每个模型只推理一次")
     args = ap.parse_args()
+
+    cfg_path = ROOT / "models" / "models.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
 
     img = make_image()
     print(f"测试图: {img.shape[1]}x{img.shape[0]}")
 
     failed = 0
-    for path, label, imgsz in MODELS:
+    for key, rel, expect_size in MODELS:
+        path = ROOT / rel
+        if not path.exists():
+            print(f"  [FAIL] {rel} 不存在")
+            failed += 1
+            continue
         try:
-            t0 = time.perf_counter()
-            model = YOLO(path)
-            load_s = time.perf_counter() - t0
-
+            c = cfg.get(key, {})
+            det = Detector(str(path), per_class=c.get("per_class"),
+                           global_conf=c.get("global", 0.25))
             runs = 1 if args.fast else 2
-            times = []
             res = None
             for _ in range(runs):
-                t = time.perf_counter()
-                res = model.predict(img, conf=0.2, iou=0.45, imgsz=imgsz, verbose=False)[0]
-                times.append((time.perf_counter() - t) * 1000)
+                res = det.predict(img, iou=0.45)
 
-            n_cls = len(model.names)
-            n_box = len(res.boxes) if res.boxes is not None else 0
-            print(f"  [OK] {label}")
-            print(f"       类别 {n_cls} 个 · imgsz {imgsz} · 加载 {load_s*1000:.0f} ms "
-                  f"· 推理 {min(times):.0f} ms · 检出 {n_box} 个框")
-            if n_cls == 0:
-                print("       [FAIL] 类别数为 0，模型元数据可能损坏")
+            status = "OK" if det.size == expect_size and len(det.names) > 0 else "FAIL"
+            print(f"  [{status}] {key}: imgsz={det.size} · 类别 {len(det.names)} 个 "
+                  f"· 推理 {res.ms:.0f} ms · 检出 {len(res.boxes)} · 最高分 {res.max_score:.3f}")
+            if status == "FAIL":
                 failed += 1
         except Exception as e:
-            print(f"  [FAIL] {label}: {type(e).__name__}: {e}")
+            print(f"  [FAIL] {key}: {type(e).__name__}: {e}")
             failed += 1
 
     print()

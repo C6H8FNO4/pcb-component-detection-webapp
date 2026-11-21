@@ -4,9 +4,9 @@
     PCB 缺陷检测 —— Web 服务一键安装脚本（Windows）
 
 .DESCRIPTION
-    1) 找一个可用的 Python（3.9–3.12，torch 不支持 3.13+）
+    1) 找一个可用的 Python（3.9–3.12）
     2) 在 webapp\.venv 建虚拟环境
-    3) 安装依赖（torch 走 CPU 索引，体积小）
+    3) 安装依赖（onnxruntime 推理，不需要 torch）
     4) 检查 models\ 下的 ONNX 权重
     5) 默认直接启动服务
 
@@ -17,7 +17,7 @@
     只安装，不启动服务
 
 .PARAMETER CpuOnly
-    强制安装 CPU 版 torch（默认行为，保留该开关只为语义清晰）
+    保留参数（兼容旧用法，无实际作用）
 
 .EXAMPLE
     .\install.ps1
@@ -84,7 +84,7 @@ foreach ($cand in $candidates) {
             Write-Ok "使用 $shown  (Python $ver)"
             break
         } else {
-            Write-Warn2 "跳过 $shown  (Python $ver，torch 不支持)"
+            Write-Warn2 "跳过 $shown  (Python $ver，需要 3.9–3.12)"
         }
     }
 }
@@ -119,10 +119,6 @@ if (Test-Path $venvPy) {
 Write-Ok ("pip " + (& $venvPy -m pip --version).Split(" ")[1])
 
 # ---------------------------------------------------------------- 3. 装依赖
-Write-Step "安装 PyTorch（CPU 版，约 200 MB）"
-& $venvPy -m pip install --quiet torch torchvision --index-url https://download.pytorch.org/whl/cpu
-if ($LASTEXITCODE -ne 0) { Fail "PyTorch 安装失败。可尝试国内镜像：-i https://pypi.tuna.tsinghua.edu.cn/simple" }
-Write-Ok "PyTorch 就绪"
 
 Write-Step "安装其余依赖（ultralytics / flask / opencv …）"
 & $venvPy -m pip install --quiet -r (Join-Path $PSScriptRoot "requirements.txt")
@@ -130,7 +126,7 @@ if ($LASTEXITCODE -ne 0) { Fail "依赖安装失败。可尝试国内镜像：-i
 Write-Ok "依赖安装完成"
 
 Write-Step "自检"
-$check = & $venvPy -c "import torch,ultralytics,flask,cv2,numpy;print('torch',torch.__version__);print('ultralytics',ultralytics.__version__);print('cuda',torch.cuda.is_available())" 2>&1
+$check = & $venvPy -c "import flask,cv2,numpy,onnx,onnxruntime;print('flask',flask.__version__);print('onnxruntime',onnxruntime.__version__)" 2>&1
 $check | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
 if ($LASTEXITCODE -ne 0) { Fail "依赖自检失败" }
 

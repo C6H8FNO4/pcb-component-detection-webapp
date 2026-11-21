@@ -17,28 +17,32 @@
 ### 方式一：便携包（零安装）
 
 从 [Releases](https://github.com/C6H8FNO4/pcb-component-detection-webapp/releases) 下载
-`pcb-webapp-portable-win64.zip`（约 442 MB），解压后双击 `启动.bat`。
+`pcb-webapp-portable-win64.zip`（约 195 MB），解压后双击 `启动.bat`。
 
-- 内含便携 Python 3.10 + 全部依赖 + 两个模型
+- 内含便携 Python 3.10 + 全部依赖（含 VC++ 运行库）+ 两个模型，干净系统直接可用
 - 不需要装 Python、不需要联网
 - Windows 10/11 x64
 
-### 方式二：脚本安装（可选 GPU）
+### 方式二：脚本安装（CPU / GPU）
 
 ```powershell
-.\install-gpu.ps1          # 菜单：CPU / CUDA 12.1 / 12.4 / 12.6 / 12.8
+.\install-gpu.ps1          # 交互选择 CPU / GPU
 ```
 
-脚本会探测显卡与驱动（`nvidia-smi`）、按驱动版本推荐 CUDA、建虚拟环境、装对应 torch、
-失败自动切清华镜像、自检 `torch.cuda.is_available()`，最后检查模型并启动。
+推理用 **onnxruntime**，不需要 torch：
+
+| 后端 | 包 | 体积 | 说明 |
+|---|---|---|---|
+| CPU | `onnxruntime` | ~60 MB | 默认，单帧 0.45–1.2 秒 |
+| GPU | `onnxruntime-gpu` | ~250 MB | 需系统已装 CUDA 12.x + cuDNN 9 |
 
 ```powershell
-.\install-gpu.ps1 -Backend cu124            # 跳过菜单
-.\install-gpu.ps1 -Backend cpu -Mirror      # CPU + 国内镜像
-.\install-gpu.ps1 -Backend cpu -SkipDeps    # 环境已就绪，只做检查
+.\install-gpu.ps1 -Gpu                 # 直接装 GPU 版
+.\install-gpu.ps1 -Cpu -Mirror         # CPU + 国内镜像
+.\install-gpu.ps1 -Cpu -SkipDeps       # 环境已就绪，只做检查
 ```
 
-Linux / macOS：`bash install-gpu.sh`（同样的参数）。
+Linux / macOS：`bash install-gpu.sh --cpu` / `--gpu`。
 
 ### 方式三：手动
 
@@ -202,8 +206,8 @@ docker run -d -p 8000:8000 --name pcb-web pcb-defect-web
 
 | 产物 | 体积 |
 |---|---|
-| 便携包（cpu） | ~440 MB |
-| 便携包（cu126 / cu124） | **2–3 GB** |
+| 便携包（cpu） | ~195 MB |
+| 便携包（GPU 版） | 依赖 ~250 MB + CUDA 运行库 |
 | Docker 镜像 tar.gz（cpu / cuda） | ~1.3 GB / ~7 GB |
 
 GitHub 私有仓库的 **artifact 存储免费额度只有 500 MB**，CUDA 产物会很快超限。

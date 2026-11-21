@@ -1,27 +1,20 @@
 # PCB defect detection - runtime dependencies
 #
-# Recommended: use the installer script (picks Python, creates venv, chooses CPU/CUDA torch):
-#   Windows:  .\install-gpu.ps1        (CPU / CUDA 12.1-12.8)
-#   Linux:    bash install-gpu.sh
+# Web 版只用 onnxruntime 推理，不需要 torch / ultralytics（包体积差 ~1 GB）。
 #
-# Manual install:
+# 安装：
 #   pip install -r requirements.txt
-#   # China mirror: -i https://pypi.tuna.tsinghua.edu.cn/simple
+#   国内镜像：-i https://pypi.tuna.tsinghua.edu.cn/simple
 #
-# NOTE: torch is NOT listed here. The installer picks the right CUDA build for your GPU.
-# Manual CPU install:
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-# Manual GPU install (example, CUDA 12.4):
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-#
-# Keep this file ASCII-only: pip reads it with the system locale encoding, and
-# non-ASCII comments break on Windows runners with a cp1252 default codepage.
+# 要保持本文件是纯 ASCII：pip 用系统 locale 读取，Windows runner（cp1252）上
+# 非 ASCII 注释会触发 UnicodeDecodeError。
 
-ultralytics==8.4.215
 flask>=3.0
 opencv-python>=4.9
-pandas>=2.0
 numpy>=1.24,<3
+onnx>=1.16
+onnxruntime>=1.17,<2
 
-# Optional: Gradio UI (app_gradio.py). Skip it to keep the install lean.
+# 可选：Gradio 版界面（app_gradio.py）与 CSV 处理
 # gradio>=4.44
+# pandas>=2.0

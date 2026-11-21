@@ -17,3 +17,8 @@ dist/
 # 便携包构建中间目录（1.2 GB，含 python-embed 与 site-packages）
 build_portable/
 
+
+# pip 临时文件
+tmp*.pem
+*.pem
+
