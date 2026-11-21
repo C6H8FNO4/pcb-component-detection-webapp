@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv*/
+.ultralytics/
+torchinductor_*/
+runs/
+
+# 日志与打包产物
+*.log
+dist/
+*.zip
+
+# 源权重 .pt 不入库（体积大，只用于重新导出）
+*.pt
