@@ -14,3 +14,6 @@ dist/
 
 # 源权重 .pt 不入库（体积大，只用于重新导出）
 *.pt
+# 便携包构建中间目录（1.2 GB，含 python-embed 与 site-packages）
+build_portable/
+

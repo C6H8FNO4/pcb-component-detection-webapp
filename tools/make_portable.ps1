@@ -23,6 +23,9 @@
 .PARAMETER OutFile
     输出 zip 路径（默认 dist/pcb-webapp-portable-win64.zip）
 
+.PARAMETER Venv
+    复用已有虚拟环境（跳过建 venv）
+
 .PARAMETER SkipDeps
     复用已有 venv，跳过 pip 安装（调试用）
 
@@ -34,6 +37,7 @@ param(
     [string]$Python = "",
     [string]$OutFile = "",
     [string]$WorkDir = "build_portable",
+    [string]$Venv = "",
     [switch]$SkipDeps
 )
 
@@ -56,7 +60,15 @@ if (-not $OutFile) { $OutFile = Join-Path $Root "dist\pcb-webapp-portable-win64.
 
 # ---------------------------------------------------------------- 1. 选 Python
 Step "准备 Python"
-if (-not $Python) {
+$venvPyMaybe = if ($Venv) { Join-Path $Venv "Scripts\python.exe" } else { "" }
+
+if ($venvPyMaybe -and (Test-Path $venvPyMaybe)) {
+    # 已有 venv：直接用它，不用探测系统 Python
+    $PyVer = (& $venvPyMaybe -c "import sys;print('%d.%d'%sys.version_info[:2])" 2>$null | Select-Object -First 1)
+    $Python = ""
+    Ok "复用 venv：$Venv（Python $PyVer）"
+}
+elseif (-not $Python) {
     foreach ($cand in @(@("py", "-3.11"), @("py", "-3.12"), @("py", "-3.10"), @("python"))) {
         try {
             $lead = if ($cand.Length -gt 1) { $cand[1..($cand.Length - 1)] } else { @() }
@@ -67,13 +79,14 @@ if (-not $Python) {
 } else {
     $PyVer = (& $Python -c "import sys;print('%d.%d'%sys.version_info[:2])" 2>$null | Select-Object -First 1)
 }
-if (-not $Python -or -not $PyVer) { Die "找不到 Python 3.10–3.12" }
-Ok "Python $PyVer  ($Python)"
+if (-not $Python -and -not ($venvPyMaybe -and (Test-Path $venvPyMaybe))) { Die "找不到 Python 3.10–3.12" }
+if (-not $PyVer) { Die "无法确定 Python 版本" }
+Ok "Python $PyVer"
 if (-not $EMBED.ContainsKey($PyVer)) { Die "没有对应的 python-embed 版本：$PyVer" }
 
 # ---------------------------------------------------------------- 2. venv + 依赖
 $work = Join-Path $Root $WorkDir
-$venv = Join-Path $work "venv"
+$venv = if ($Venv) { $Venv } else { Join-Path $work "venv" }
 $venvPy = Join-Path $venv "Scripts\python.exe"
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
@@ -81,7 +94,8 @@ if ($SkipDeps -and (Test-Path $venvPy)) {
     Ok "复用已有 venv（-SkipDeps）"
 } else {
     Step "创建 venv 并安装依赖"
-    if (Test-Path $venv) { Remove-Item -Recurse -Force $venv }
+    # 只在“自己建的临时 venv”时清理；-Venv 指向的现有环境绝不删除
+    if (-not $Venv -and (Test-Path $venv)) { Remove-Item -Recurse -Force $venv }
     # 正确拆分 "py -3.11" 这类带参数的解释器（不能对数组取 [1..100]，会产生大量 $null）
     $pyParts = $Python.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)
     $pyExe = $pyParts[0]
@@ -114,6 +128,26 @@ New-Item -ItemType Directory -Force -Path $pyDir | Out-Null
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::ExtractToDirectory($embedZip, $pyDir)
 Ok "python-embed 解压完成"
+
+# --- MSVC 运行库：torch 的 c10.dll 依赖 msvcp140.dll，干净系统上没有会直接崩 ---
+$crtDlls = @("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+             "vcruntime140.dll", "vcruntime140_1.dll", "concrt140.dll")
+$copied = 0
+foreach ($dll in $crtDlls) {
+    $src = Join-Path $env:SystemRoot "System32\$dll"
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $pyDir $dll) -Force
+        $copied++
+    } else {
+        Write-Host "    [!] 本机缺少 $dll（没装 VC++ 运行库），将跳过" -ForegroundColor Yellow
+    }
+}
+if ($copied -lt 3) {
+    Write-Host "    [!] 警告：只打包到 $copied 个运行库 DLL。目标机器可能需要另外安装 VC++ 2015-2022 x64 运行库" -ForegroundColor Yellow
+    Write-Host "        下载：https://aka.ms/vs/17/release/vc_redist.x64.exe" -ForegroundColor Yellow
+} else {
+    Ok "已打包 $copied 个 MSVC 运行库 DLL（目标机器无需另装 VC++ 运行库）"
+}
 
 # 打开 site-packages 搜索
 $pthName = Get-ChildItem $pyDir -Filter "*._pth" | Select-Object -First 1
@@ -179,6 +213,58 @@ exit /b 1
 Set-Content -Path (Join-Path $pkg "启动.bat") -Value $bat -Encoding ascii
 Copy-Item (Join-Path $pkg "启动.bat") (Join-Path $pkg "start.bat") -Force
 Ok "启动脚本已写入"
+
+# 使用说明（UTF-8，记事本可直接打开）
+$readme = @"
+PCB 缺陷检测 · 网页版（便携包）
+================================
+
+零安装：不用装 Python / pip / VC++ 运行库，也不用联网。解压后双击 start.bat（或 启动.bat）。
+
+怎么用
+  1. 解压到任意目录（路径尽量不含空格）
+  2. 双击 start.bat
+     · 会弹出一个控制台窗口（服务日志，关掉即停止服务）
+     · 浏览器自动打开 http://127.0.0.1:8000/
+  3. 页面有两个页签：
+       单张检测 —— 拖图片进去 / 选图，自动标注 + 明细，可导出 CSV
+       实时检测 —— 摄像头，或「抓取窗口/屏幕」把别的窗口当视频源连续检测
+
+想直接从实时页开始：http://127.0.0.1:8000/?tab=live
+
+两个模型（页面右上角切换）
+  solder_yolo26m_800.onnx   焊接/装配缺陷 9 类（少锡 多锡 连锡 空洞 缺件 偏移 烧焦 损伤 氧化）
+  bare_yolo26s_1024.onnx    裸板缺陷 7 类（缺孔 鼠咬 开路 短路 毛刺 余铜 针孔）
+
+局域网访问
+  服务监听 0.0.0.0:8000，启动时控制台会打印局域网地址。
+  需要管理员放行一次：
+    netsh advfirewall firewall add rule name="PCB-Web-8000" dir=in action=allow protocol=TCP localport=8000
+  注意：通过 http:// 用局域网 IP 访问时，浏览器不授权摄像头和屏幕抓取（要求 https），单张检测照常可用。
+
+性能参考（CPU）
+  solder (imgsz 800)   单帧约 0.45–1.0 秒
+  bare   (imgsz 1024)  单帧约 0.5–1.2 秒
+  实时模式画面流畅，但检测框约每秒刷新一次（受模型计算量限制）。
+
+改端口
+  命令行设置环境变量后再启动：
+    set PCB_PORT=8080
+    start.bat
+
+目录
+  python\       便携 Python + 全部依赖（含 VC++ 运行库，无需另装）
+  app\          服务端与网页
+  启动.bat      start.bat 的中文名，两者内容相同
+
+常见问题
+  · 双击窗口一闪而过：用命令行进目录执行 start.bat 看报错；多半是解压不完整
+  · 杀毒软件报警：便携 Python 常被误报，把整个文件夹加白名单
+  · 端口被占用：按上面「改端口」换 8080
+  · 页面显示「models/ 里没找到模型」：app\models\ 里的 .onnx 丢了，重新解压
+"@
+Set-Content -Path (Join-Path $pkg "使用说明.txt") -Value $readme -Encoding utf8
+Ok "使用说明.txt 已写入"
 
 # ---------------------------------------------------------------- 4. 自检
 Step "便携包自检"
