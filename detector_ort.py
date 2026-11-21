@@ -92,7 +92,7 @@ class Detector:
 
     # ---------------------------------------------------------------- 推理
     def predict(self, img_bgr: np.ndarray, conf: float | None = None,
-                iou: float = 0.45) -> Result:
+                iou: float = 0.45, scale: float = 1.0) -> Result:
         h, w = img_bgr.shape[:2]
         r = Result()
         r.size = (w, h)
@@ -116,6 +116,7 @@ class Detector:
             scores = pred[4 + c]
             th = conf if conf is not None else self.per_class.get(
                 self.names.get(c, ""), self.global_conf)
+            th *= scale   # 实时模式可放宽（<1 更容易检出）
             if scores.size:
                 r.max_score = max(r.max_score, float(scores.max()))
             idx = np.nonzero(scores >= th)[0]

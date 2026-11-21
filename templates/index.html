@@ -428,6 +428,9 @@ async function captureOnce() {
   fd.append('iou', $('iouLive').value);
   if (!(CURRENT.has_per_class_conf && $('usePerClassLive').checked)) {
     fd.append('conf', $('confLive').value);
+  } else {
+    // 实时画面里缺陷占的像素少、分数偏低：按类别阈值时放宽到 0.6（与 Android 端一致）
+    fd.append('conf_scale', '0.6');
   }
   try {
     const j = await fetchJSON('/api/detect', { method:'POST', body:fd });
@@ -453,13 +456,19 @@ function updateLivePanel(j) {
   const brief = Object.keys(counts).length
     ? Object.entries(counts).map(([k, v]) => `${k}×${v}`).join('  ')
     : '无缺陷';
+  const ms = (j.max_score !== undefined && j.max_score !== null) ? j.max_score.toFixed(3) : '-';
   $('hud').textContent =
     `检测 ${live.fps.toFixed(1)} fps · 推理 ${j.ms} ms\n` +
-    `帧 ${j.size.w}×${j.size.h} · 缺陷 ${j.detections.length} 个\n${brief}`;
+    `帧 ${j.size.w}×${j.size.h} · 缺陷 ${j.detections.length} 个 · 最高分 ${ms}\n${brief}`;
 
+  let tip = '';
+  if (!j.detections.length && j.max_score >= 0.15) {
+    tip = `<br><span class="hint">模型最高分 ${j.max_score.toFixed(3)}，低于该类别阈值；` +
+          `可取消「按类别推荐阈值」或降低置信度后再看</span>`;
+  }
   $('liveSummary').innerHTML = `<b>缺陷 ${j.detections.length} 个</b>` +
-    `<span class="hint"> · ${CURRENT.label} · 单帧推理 ${j.ms} ms · ${live.fps.toFixed(1)} fps</span>`
-    + (j.detections.length ? '<br>' + brief : '');
+    `<span class="hint"> · ${CURRENT.label} · 单帧推理 ${j.ms} ms · ${live.fps.toFixed(1)} fps · 最高分 ${ms}</span>`
+    + (j.detections.length ? '<br>' + brief : tip);
   const tb = $('liveTable').querySelector('tbody');
   tb.innerHTML = j.detections.map((d,i) => `<tr><td>${i+1}</td>
     <td><span class="dot" style="background:${COLORS[d.cls % COLORS.length]}"></span><span class="tag">${d.name}</span> ${d.cn}</td>

@@ -185,10 +185,10 @@ class ModelEntry:
     def names(self) -> dict[int, str]:
         return self.model.names
 
-    def predict(self, img, conf: float | None, iou: float, imgsz: int):
+    def predict(self, img, conf: float | None, iou: float, imgsz: int, scale: float = 1.0):
         """返回 detector_ort.Result；imgsz 由模型自身决定（ONNX 输入固定）。"""
         with self.lock:
-            return self.model.predict(img, conf=conf, iou=iou)
+            return self.model.predict(img, conf=conf, iou=iou, scale=scale)
 
 
 def get_model(key: str) -> ModelEntry:
@@ -361,39 +361,16 @@ def api_predict():
                        traceback=traceback.format_exc()[-1200:]), 500
     ms = (time.perf_counter() - t0) * 1000
 
+    # detector_ort.Result.boxes 是 dict 列表，已完成逐类阈值过滤 + NMS
     dets = []
-    for box in res.boxes or []:
-        cid = int(box.cls.item())
-        name = ent.names.get(cid, str(cid))
-        sc = float(box.conf.item())
-        # 逐类阈值过滤（conf 显式传入时以它为准）
-        if conf is None and per_class and sc < per_class.get(name, desc["global_conf"]):
-            continue
-        x1, y1, x2, y2 = [round(v, 1) for v in box.xyxy[0].tolist()]
-        dets.append({
-            "cls": cid, "name": name, "cn": CN.get(name, ""),
-            "conf": round(sc, 4),
-            "xyxy": [x1, y1, x2, y2],
-            "w": round(x2 - x1, 1), "h": round(y2 - y1, 1),
-        })
+    for b in res.boxes:
+        name = b["name"]
+        dets.append({"cls": b["cls"], "name": name, "cn": CN.get(name, ""),
+                     "conf": b["conf"], "xyxy": b["xyxy"]})
 
-    ok, enc = cv2.imencode(".jpg", draw_boxes(img, dets),
-                           [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-    data_url = "data:image/jpeg;base64," + base64.b64encode(enc.tobytes()).decode()
-
-    if dets:
-        counts: dict[str, int] = {}
-        for d in dets:
-            counts[d["name"]] = counts.get(d["name"], 0) + 1
-        summary = f"共 {len(dets)} 个缺陷：" + "，".join(
-            f"{k}({CN.get(k, '')})×{v}" for k, v in counts.items())
-    else:
-        summary = "未检测到缺陷"
-
-    return jsonify(ok=True, model=key, model_label=desc["label"],
-                   count=len(dets), image=data_url, detections=dets,
-                   summary=summary, ms=round(ms, 1),
-                   size={"w": img.shape[1], "h": img.shape[0]})
+    return jsonify(ok=True, model=key, count=len(dets), detections=dets,
+                   max_score=round(res.max_score, 4),
+                   ms=round(ms, 1), size={"w": img.shape[1], "h": img.shape[0]})
 
 
 @app.post("/api/detect")
@@ -422,24 +399,28 @@ def api_detect():
     desc = MODELS[key]
     per_class = desc.get("per_class") or {}
     ent = get_model(key)
+    # 实时模式可放宽阈值（conf_scale < 1 更容易检出）
+    try:
+        conf_scale = float(request.form.get("conf_scale", 1.0))
+    except (TypeError, ValueError):
+        conf_scale = 1.0
+    conf_scale = min(1.0, max(0.05, conf_scale))
 
     t0 = time.perf_counter()
-    res = ent.predict(img, conf, iou, desc["imgsz"])
+    res = ent.predict(img, conf, iou, desc["imgsz"], conf_scale)
     ms = (time.perf_counter() - t0) * 1000
 
+    # detector_ort.Result.boxes 已是 dict 列表，且已完成逐类阈值过滤 + NMS
     dets = []
-    for box in res.boxes or []:
-        cid = int(box.cls.item())
-        name = ent.names.get(cid, str(cid))
-        sc = float(box.conf.item())
-        if conf is None and per_class and sc < per_class.get(name, desc["global_conf"]):
-            continue
-        x1, y1, x2, y2 = [round(v, 1) for v in box.xyxy[0].tolist()]
-        dets.append({"cls": cid, "name": name, "cn": CN.get(name, ""),
-                     "conf": round(sc, 3), "xyxy": [x1, y1, x2, y2]})
+    for b in res.boxes:
+        name = b["name"]
+        dets.append({"cls": b["cls"], "name": name, "cn": CN.get(name, ""),
+                     "conf": b["conf"], "xyxy": b["xyxy"]})
 
     return jsonify(ok=True, model=key, count=len(dets), detections=dets,
+                   max_score=round(res.max_score, 4),
                    ms=round(ms, 1), size={"w": img.shape[1], "h": img.shape[0]})
+
 
 
 def _lan_ip() -> str | None:
