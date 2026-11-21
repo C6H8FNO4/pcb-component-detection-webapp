@@ -5,7 +5,7 @@
 .DESCRIPTION
     流程：
       1. 用指定 Python 建一个临时 venv
-      2. 装 torch（按 -TorchIndex 选 CPU / CUDA 版本）+ requirements
+      2. 装 requirements.txt 里的依赖（onnxruntime，不需要 torch）
       3. 下载对应版本的 python embeddable，套上 venv 的 site-packages
       4. 复制 app / templates / models，写启动脚本
       5. 压缩成 zip
@@ -111,9 +111,6 @@ if ($SitePackages) {
     if (-not (Test-Path $venvPy)) { Die "venv 创建失败" }
     Ok "venv 就绪"
 
-    & $venvPy -m pip install -q --prefer-binary --timeout 60 --retries 3 torch torchvision --index-url $TorchIndex
-    if ($LASTEXITCODE -ne 0) { Die "torch 安装失败（$TorchIndex）" }
-    Ok "torch 安装完成"
 
     & $venvPy -m pip install -q --prefer-binary --timeout 60 --retries 3 -r (Join-Path $Root "requirements.txt")
     if ($LASTEXITCODE -ne 0) { Die "依赖安装失败" }

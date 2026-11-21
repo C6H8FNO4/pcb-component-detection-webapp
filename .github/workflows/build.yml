@@ -124,7 +124,6 @@ jobs:
         shell: pwsh
         run: |
           ./tools/make_portable.ps1 `
-            -TorchIndex "https://download.pytorch.org/whl/${{ matrix.backend }}" `
             -OutFile "dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip"
 
       - name: 上传 artifact
