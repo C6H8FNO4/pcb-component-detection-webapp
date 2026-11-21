@@ -171,8 +171,9 @@ Ok ("site-packages {0:N0} MB" -f ((Get-ChildItem $dstSp -Recurse -File | Measure
 # 复制应用文件
 $appDir = Join-Path $pkg "app"
 New-Item -ItemType Directory -Force -Path $appDir | Out-Null
-Copy-Item (Join-Path $Root "app_flask.py") $appDir -Force
-Copy-Item (Join-Path $Root "open_browser.py") $appDir -Force
+# 复制根目录所有 .py（app_flask.py / detector_ort.py / open_browser.py …）
+# 之前写死清单漏了 detector_ort.py，导致包内启动 ModuleNotFoundError
+Get-ChildItem $Root -Filter *.py -File | Copy-Item -Destination $appDir -Force
 Copy-Item (Join-Path $Root "templates") $appDir -Recurse -Force
 Copy-Item (Join-Path $Root "models") $appDir -Recurse -Force
 # 模型目录只保留 .onnx 与配置
