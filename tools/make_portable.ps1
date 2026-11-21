@@ -82,8 +82,11 @@ if ($SkipDeps -and (Test-Path $venvPy)) {
 } else {
     Step "创建 venv 并安装依赖"
     if (Test-Path $venv) { Remove-Item -Recurse -Force $venv }
-    $lead = if ($Python -like "* *") { $Python.Split(" ")[1..100] } else { @() }
-    & $Python.Split(" ")[0] @lead -m venv $venv
+    # 正确拆分 "py -3.11" 这类带参数的解释器（不能对数组取 [1..100]，会产生大量 $null）
+    $pyParts = $Python.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)
+    $pyExe = $pyParts[0]
+    $pyArgs = if ($pyParts.Length -gt 1) { $pyParts[1..($pyParts.Length - 1)] } else { @() }
+    & $pyExe @pyArgs -m venv $venv
     if (-not (Test-Path $venvPy)) { Die "venv 创建失败" }
     Ok "venv 就绪"
 

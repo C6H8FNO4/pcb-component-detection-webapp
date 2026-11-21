@@ -1,18 +1,21 @@
-# PCB 缺陷检测 Web 服务 —— 运行依赖
+# PCB defect detection - runtime dependencies
 #
-# 推荐用安装脚本（会自动选 Python、建虚拟环境、挑 GPU/CPU 版 torch）：
-#   Windows:  .\install-gpu.ps1         （可选 CPU / CUDA 12.1–12.8）
+# Recommended: use the installer script (picks Python, creates venv, chooses CPU/CUDA torch):
+#   Windows:  .\install-gpu.ps1        (CPU / CUDA 12.1-12.8)
 #   Linux:    bash install-gpu.sh
 #
-# 手动安装：
+# Manual install:
 #   pip install -r requirements.txt
-# 国内网络可加：-i https://pypi.tuna.tsinghua.edu.cn/simple
+#   # China mirror: -i https://pypi.tuna.tsinghua.edu.cn/simple
 #
-# 注意：torch 不在这里声明。安装脚本会按你的显卡选择对应的 CUDA 版本，
-#       手动装的话先执行（CPU 版）：
+# NOTE: torch is NOT listed here. The installer picks the right CUDA build for your GPU.
+# Manual CPU install:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-#       或 GPU 版（例：CUDA 12.4）：
+# Manual GPU install (example, CUDA 12.4):
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#
+# Keep this file ASCII-only: pip reads it with the system locale encoding, and
+# non-ASCII comments break on Windows runners with a cp1252 default codepage.
 
 ultralytics==8.4.215
 flask>=3.0
@@ -20,5 +23,5 @@ opencv-python>=4.9
 pandas>=2.0
 numpy>=1.24,<3
 
-# 可选：Gradio 版界面（app_gradio.py）。不用它可以不装，体积会小很多
+# Optional: Gradio UI (app_gradio.py). Skip it to keep the install lean.
 # gradio>=4.44

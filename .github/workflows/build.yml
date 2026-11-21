@@ -33,6 +33,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # Windows runner 默认代码页是 cp1252，pip 读取 UTF-8 文件会崩；强制 UTF-8
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: 'utf-8'
+
 jobs:
   # ---------------------------------------------------------------- 生成矩阵
   prepare:
