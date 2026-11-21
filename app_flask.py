@@ -306,8 +306,12 @@ def _not_found(e):
 @app.errorhandler(500)
 def _server_error(e):
     if request.path.startswith("/api/"):
+        import traceback
+        exc = getattr(e, "original_exception", e)
+        traceback.print_exc()
         return jsonify(ok=False, error="internal_error", path=request.path,
-                       detail=str(getattr(e, "original_exception", e))), 500
+                       detail=f"{type(exc).__name__}: {exc}",
+                       traceback=traceback.format_exc()[-1200:]), 500
     return e, 500
 
 @app.get("/")
@@ -346,7 +350,15 @@ def api_predict():
     imgsz = desc["imgsz"]
 
     t0 = time.perf_counter()
-    res = ent.predict(img, conf, iou, imgsz)
+    try:
+        res = ent.predict(img, conf, iou, imgsz)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify(ok=False, error="inference_failed",
+                       model=key,
+                       detail=f"{type(e).__name__}: {e}",
+                       traceback=traceback.format_exc()[-1200:]), 500
     ms = (time.perf_counter() - t0) * 1000
 
     dets = []

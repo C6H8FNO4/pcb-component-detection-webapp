@@ -64,7 +64,13 @@ class Detector:
             raise FileNotFoundError(model_path)
 
         so = ort.SessionOptions()
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # 若某些环境上图优化阶段出问题，可用 PCB_ORT_LEVEL=basic/off 降级
+        _lvl = os.environ.get("PCB_ORT_LEVEL", "all").lower()
+        so.graph_optimization_level = {
+            "all": ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+            "basic": ort.GraphOptimizationLevel.ORT_ENABLE_BASIC,
+            "off": ort.GraphOptimizationLevel.ORT_DISABLE_ALL,
+        }.get(_lvl, ort.GraphOptimizationLevel.ORT_ENABLE_ALL)
         if threads:
             so.intra_op_num_threads = max(1, int(threads))
         self.sess = ort.InferenceSession(model_path, so, providers=["CPUExecutionProvider"])

@@ -154,7 +154,9 @@ async function fetchJSON(url, opts) {
   }
   const j = await r.json();
   if (j && j.ok === false && j.error) {
-    throw new Error(`接口 ${url} 出错: ${j.error}${j.hint ? ' — ' + j.hint : ''}`);
+    const more = j.detail ? ` — ${j.detail}` : (j.hint ? ` — ${j.hint}` : '');
+    if (j.traceback) console.error(j.traceback);
+    throw new Error(`接口 ${url} 出错: ${j.error}${more}`);
   }
   return j;
 }
