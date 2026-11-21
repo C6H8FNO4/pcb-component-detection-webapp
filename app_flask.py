@@ -326,14 +326,14 @@ def api_models():
 
 @app.post("/api/predict")
 def api_predict():
+    """单张检测：返回标注后的整图（base64）+ 明细。"""
     f = request.files.get("file")
     if f is None or not f.filename:
         return jsonify(ok=False, error="没有收到文件字段 file"), 400
 
     key = request.form.get("model") or next(iter(MODELS), None)
     if not key or key not in MODELS:
-        return jsonify(ok=False, error=f"未知模型: {key}",
-                       available=list(MODELS)), 400
+        return jsonify(ok=False, error=f"未知模型: {key}", available=list(MODELS)), 400
 
     buf = np.frombuffer(f.read(), dtype=np.uint8)
     img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
@@ -345,32 +345,47 @@ def api_predict():
     conf = float(conf_raw) if conf_raw not in (None, "", "null") else None
 
     desc = MODELS[key]
-    per_class = desc.get("per_class") or {}
     ent = get_model(key)
-    imgsz = desc["imgsz"]
 
     t0 = time.perf_counter()
     try:
-        res = ent.predict(img, conf, iou, imgsz)
+        res = ent.predict(img, conf, iou, desc["imgsz"])
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify(ok=False, error="inference_failed",
-                       model=key,
+        return jsonify(ok=False, error="inference_failed", model=key,
                        detail=f"{type(e).__name__}: {e}",
                        traceback=traceback.format_exc()[-1200:]), 500
     ms = (time.perf_counter() - t0) * 1000
 
-    # detector_ort.Result.boxes 是 dict 列表，已完成逐类阈值过滤 + NMS
+    # detector_ort.Result.boxes 已是 dict 列表（已按逐类阈值过滤 + NMS）
     dets = []
     for b in res.boxes:
         name = b["name"]
-        dets.append({"cls": b["cls"], "name": name, "cn": CN.get(name, ""),
-                     "conf": b["conf"], "xyxy": b["xyxy"]})
+        x1, y1, x2, y2 = b["xyxy"]
+        dets.append({
+            "cls": b["cls"], "name": name, "cn": CN.get(name, ""),
+            "conf": b["conf"], "xyxy": [x1, y1, x2, y2],
+            "w": round(x2 - x1, 1), "h": round(y2 - y1, 1),
+        })
+
+    # 画框并编码成 base64（前端直接用 <img src> 显示）
+    image = None
+    try:
+        vis = draw_boxes(img, dets)
+        ok_enc, enc = cv2.imencode(".jpg", vis, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+        if ok_enc:
+            image = "data:image/jpeg;base64," + base64.b64encode(enc.tobytes()).decode()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[PCB] 绘制标注图失败: {type(e).__name__}: {e}")
 
     return jsonify(ok=True, model=key, count=len(dets), detections=dets,
                    max_score=round(res.max_score, 4),
-                   ms=round(ms, 1), size={"w": img.shape[1], "h": img.shape[0]})
+                   ms=round(ms, 1),
+                   size={"w": img.shape[1], "h": img.shape[0]},
+                   image=image)
 
 
 @app.post("/api/detect")
