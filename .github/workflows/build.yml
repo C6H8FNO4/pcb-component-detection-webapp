@@ -74,9 +74,9 @@ jobs:
     timeout-minutes: 60
     name: smoke / ${{ matrix.os }} / ${{ matrix.backend }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
@@ -105,9 +105,9 @@ jobs:
         backend: ${{ fromJSON(needs.prepare.outputs.backends) }}
     name: portable / win64 / ${{ matrix.backend }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -119,7 +119,7 @@ jobs:
             -OutFile "dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip"
 
       - name: 上传 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: portable-win64-${{ matrix.backend }}
           path: dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip
@@ -128,7 +128,7 @@ jobs:
 
       - name: 附到 Release（仅 tag 触发）
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip
           fail_on_unmatched_files: true
@@ -149,12 +149,12 @@ jobs:
             dockerfile: Dockerfile.gpu
     name: docker / ${{ matrix.name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: 构建镜像
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -171,7 +171,7 @@ jobs:
           ls -lh pcb-webapp-${{ matrix.name }}.tar.gz
 
       - name: 上传 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: docker-${{ matrix.name }}
           path: pcb-webapp-${{ matrix.name }}.tar.gz
