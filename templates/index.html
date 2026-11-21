@@ -144,6 +144,21 @@
 </main>
 
 <script>
+// 统一处理接口返回：非 JSON（例如 404 的 HTML 页面）时给出可读的报错
+async function fetchJSON(url, opts) {
+  const r = await fetch(url, opts);
+  const ct = (r.headers.get('content-type') || '').toLowerCase();
+  if (!ct.includes('application/json')) {
+    const body = (await r.text()).slice(0, 200).replace(/\s+/g, ' ');
+    throw new Error(`接口 ${url} 返回了非 JSON（HTTP ${r.status}）: ${body}`);
+  }
+  const j = await r.json();
+  if (j && j.ok === false && j.error) {
+    throw new Error(`接口 ${url} 出错: ${j.error}${j.hint ? ' — ' + j.hint : ''}`);
+  }
+  return j;
+}
+
 const $ = id => document.getElementById(id);
 const COLORS = ['#FF5252','#FFB300','#40C4FF','#FF4081','#7C4DFF','#00E676','#FF6E40','#E040FB','#18FFFF'];
 let currentFile = null, lastDetections = [], MODELS = [], CURRENT = null;
@@ -163,7 +178,7 @@ function renderChips(m, elId) {
 
 async function loadModels() {
   try {
-    const j = await (await fetch('/api/models')).json();
+    const j = await fetchJSON('/api/models');
     MODELS = j.models || [];
     const sel = $('modelSel');
     sel.innerHTML = '';
@@ -251,7 +266,7 @@ $('run').onclick = async () => {
   fd.append('iou', $('iou').value);
   if (!(CURRENT.has_per_class_conf && $('usePerClass').checked)) fd.append('conf', $('conf').value);
   try {
-    const j = await (await fetch('/api/predict', { method:'POST', body:fd })).json();
+    const j = await fetchJSON('/api/predict', { method:'POST', body:fd });
     if (!j.ok) throw new Error(j.error || '服务返回错误');
     lastDetections = j.detections;
     $('out').innerHTML = `<img src="${j.image}" alt="result">`;
@@ -413,7 +428,7 @@ async function captureOnce() {
     fd.append('conf', $('confLive').value);
   }
   try {
-    const j = await (await fetch('/api/detect', { method:'POST', body:fd })).json();
+    const j = await fetchJSON('/api/detect', { method:'POST', body:fd });
     if (j.ok) {
       live.boxes = j.detections; live.sentW = j.size.w; live.sentH = j.size.h;
       live.ms = j.ms;

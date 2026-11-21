@@ -42,6 +42,8 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from detector_ort import Detector
 
+BUILD_TAG = "2026-11-22-ort"
+
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = Path(os.environ.get("PCB_MODEL_DIR", BASE_DIR / "models"))
 CONF_FILE = MODEL_DIR / "models.json"
@@ -278,6 +280,36 @@ def _models_payload():
     return out
 
 
+
+@app.get("/api/health")
+def api_health():
+    """自检接口：确认当前跑的是哪个构建、哪些模型可用。"""
+    return jsonify(
+        ok=True,
+        build=BUILD_TAG,
+        pid=os.getpid(),
+        cwd=os.getcwd(),
+        model_dir=str(MODEL_DIR),
+        models=sorted(MODELS.keys()),
+        loaded=sorted(CACHE.keys()) if "CACHE" in globals() else [],
+    )
+
+
+@app.errorhandler(404)
+def _not_found(e):
+    if request.path.startswith("/api/"):
+        return jsonify(ok=False, error="not_found", path=request.path,
+                       hint="这个接口不存在，可能服务是旧版本或端口被别的程序占用"), 404
+    return e, 404
+
+
+@app.errorhandler(500)
+def _server_error(e):
+    if request.path.startswith("/api/"):
+        return jsonify(ok=False, error="internal_error", path=request.path,
+                       detail=str(getattr(e, "original_exception", e))), 500
+    return e, 500
+
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -418,4 +450,11 @@ if __name__ == "__main__":
     ip = _lan_ip()
     if ip and HOST == "0.0.0.0":
         print(f"[PCB] 局域网访问: http://{ip}:{PORT}/   (需防火墙放行 {PORT})")
-    app.run(host=HOST, port=PORT, debug=False, threaded=True)
+    try:
+        app.run(host=HOST, port=PORT, debug=False, threaded=True)
+    except OSError as ex:
+        print()
+        print(f"[PCB] 启动失败：端口 {PORT} 可能已被占用（{ex}）")
+        print(f"[PCB] 换个端口：set PCB_PORT=8001  然后重新运行")
+        print("[PCB] 或先查谁占用了端口：netstat -ano | findstr :%d" % PORT)
+        raise SystemExit(1)
