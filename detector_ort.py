@@ -107,8 +107,12 @@ class Detector:
         r.ms = (time.perf_counter() - t0) * 1000.0
 
         # 3) 解码 + 逐类 NMS
-        pred = out[0] if out.ndim == 3 else out      # (4+nc, anchors)
-        nc, anchors = pred.shape[0] - 4, pred.shape[1]
+        pred = out[0] if out.ndim == 3 else out      # (4+nc[+32 masks], anchors)
+        # 分割模型的输出前半是 4 个框参数 + nc 个类别分，再往后是 32 个 mask 系数，
+        # 所以类别数不能用 shape[0]-4 推，优先用元数据里的 names
+        nc = len(self.names) if self.names else pred.shape[0] - 4
+        if pred.shape[0] < 4 + nc:
+            raise ValueError(f"模型输出通道 {pred.shape[0]} 与类别数 {nc} 不匹配")
         cx, cy, bw, bh = pred[0], pred[1], pred[2], pred[3]
 
         cands = []

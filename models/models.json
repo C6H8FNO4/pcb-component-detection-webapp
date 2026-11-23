@@ -27,5 +27,10 @@
       "spurious_copper": 0.33,
       "pin_hole": 0.571
     }
+  },
+  "seg": {
+    "label": "PCB 缺陷分割（YOLOv8m-seg · 4 类 · imgsz 640）",
+    "global": 0.25,
+    "per_class": {}
   }
 }

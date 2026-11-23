@@ -56,6 +56,9 @@ CN = {
     # 裸板（7 类）
     "missing_hole": "缺孔", "mouse_bite": "鼠咬", "open_circuit": "开路",
     "short": "短路", "spur": "毛刺", "spurious_copper": "余铜", "pin_hole": "针孔",
+    # PCB 缺陷分割模型（keremberke yolov8m-pcb-defect-segmentation）
+    "Dry_joint": "虚焊", "Incorrect_installation": "安装不当",
+    "PCB_damage": "PCB 损伤", "Short_circuit": "短路",
 }
 
 COLORS = [
@@ -92,6 +95,8 @@ def _stem_to_key(stem: str) -> str:
         return "solder"
     if s in ("best", "bare") or s.startswith("bare"):
         return "bare"
+    if s.startswith("seg"):
+        return "seg"
     return s
 
 
@@ -214,9 +219,11 @@ def get_model(key: str) -> ModelEntry:
 def draw_boxes(img, dets: list[dict]) -> np.ndarray:
     out = img.copy()
     h, w = out.shape[:2]
-    scale = max(w, h) / 640.0
+    # 以 1280 长边为基准，并限制范围，避免大图上标签糊成一大块
+    scale = max(w, h) / 1280.0
+    scale = min(max(scale, 0.6), 1.5)
     thick = max(2, int(round(3 * scale)))
-    font_scale = max(0.5, 0.55 * scale)
+    font_scale = max(0.5, 0.6 * scale)
 
     for d in dets:
         c = COLORS[d["cls"] % len(COLORS)]
