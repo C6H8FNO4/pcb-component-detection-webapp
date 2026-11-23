@@ -601,8 +601,11 @@ function renderOverlay() {
 
       if (live.sentW && live.boxes.length) {
         const sx = 1, sy = 1;
-        ctx.lineWidth = 2.5;
-        ctx.font = '12px ui-monospace, monospace';
+        // 标签与线宽跟着画面显示尺寸走，小窗口不糊、大屏不细
+        const lw = Math.min(5, Math.max(2, rect.width / 480));
+        const fs = Math.min(20, Math.max(12, rect.width / 85));
+        ctx.lineWidth = lw;
+        ctx.font = `${fs}px ui-monospace, monospace`;
         ctx.textBaseline = 'bottom';
         live.boxes.forEach(d => {
           const col = COLORS[d.cls % COLORS.length];
@@ -612,11 +615,12 @@ function renderOverlay() {
           ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
           const label = `${d.name} ${d.conf.toFixed(2)}`;
           const tw = ctx.measureText(label).width + 8;
-          const ty = y1 - 2 < 14 ? y2 + 16 : y1 - 2;
+          const bh = fs + 4;
+          const ty = y1 - 2 < bh ? y2 + bh + 2 : y1 - 2;
           ctx.fillStyle = col;
-          ctx.fillRect(x1, ty - 14, tw, 15);
+          ctx.fillRect(x1, ty - bh + 1, tw, bh);
           ctx.fillStyle = '#101418';
-          ctx.fillText(label, x1 + 4, ty);
+          ctx.fillText(label, x1 + 4, ty - 2);
         });
       }
     }

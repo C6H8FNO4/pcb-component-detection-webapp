@@ -219,11 +219,11 @@ def get_model(key: str) -> ModelEntry:
 def draw_boxes(img, dets: list[dict]) -> np.ndarray:
     out = img.copy()
     h, w = out.shape[:2]
-    # 以 1280 长边为基准，并限制范围，避免大图上标签糊成一大块
-    scale = max(w, h) / 1280.0
-    scale = min(max(scale, 0.6), 1.5)
-    thick = max(2, int(round(3 * scale)))
-    font_scale = max(0.5, 0.6 * scale)
+    # 标签高度约等于图片短边的 1.6%~2%，小图不至于糊、大图不至于看不清
+    scale = min(w, h) / 1000.0
+    scale = min(max(scale, 0.8), 3.0)
+    thick = max(2, int(round(2.6 * scale)))
+    font_scale = scale
 
     for d in dets:
         c = COLORS[d["cls"] % len(COLORS)]
