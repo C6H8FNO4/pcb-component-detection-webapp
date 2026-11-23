@@ -127,6 +127,9 @@
         <div class="row">
           <label class="p">IoU <input id="iouLive" type="range" min="0.1" max="0.9" step="0.05" value="0.45"><b id="iouLiveV">0.45</b></label>
           <label class="p"><input id="usePerClassLive" type="checkbox" checked> 按类别推荐阈值</label>
+          <label class="p"><input id="liveHiRes" type="checkbox"> <span title="不降采样、不加重压缩、阈值按模型原值，输入条件与单张检测一致">高精度（等同单张）</span></label>
+          <button id="btnRoi" class="ghost" title="在画面上拖出一个矩形，只检测这块区域（放大局部 = 单张精度）">🔍 框选区域</button>
+          <button id="btnRoiClear" class="ghost" hidden>✕ 清除区域</button>
           <label class="p">置信度 <input id="confLive" type="range" min="0.05" max="0.95" step="0.05" value="0.25" disabled><b id="confLiveV">0.25</b></label>
         </div>
         <div class="hint" id="liveNote"></div>
@@ -305,7 +308,10 @@ $('csv').onclick = () => {
 /* ---------------- 实时 ---------------- */
 const live = { stream:null, running:false, busy:false, timer:null,
                fps:0, lastTs:0, frames:0, ms:0,
-               boxes:[], sentW:0, sentH:0, maxDim:1600, grab:null };
+               boxes:[], sentW:0, sentH:0, maxDim:1600, grab:null,
+  roi:null,            // {x,y,w,h} 源视频像素坐标
+  sentOffset:{x:0,y:0}, sentRatio:1, srcW:0, srcH:0,
+  roiMode:false, drag:null };
 
 async function startLive(kind) {
   stopLive();
@@ -383,6 +389,7 @@ function stopLive() {
   if (live.testTimer) { clearInterval(live.testTimer); live.testTimer = null; }
   if (live.sourceEl && live.sourceEl.parentNode) live.sourceEl.parentNode.removeChild(live.sourceEl);
   live.sourceEl = null;
+  live.drag = null; live.dragStart = null; live.roiMode = false;
   live.source = null;
   $('video').style.display = 'none';
   $('video').srcObject = null;
@@ -402,6 +409,71 @@ $('btnScreen').onclick = () => startLive('screen');
 $('btnStop').onclick = stopLive;
 $('btnTest').onclick = () => startLive('test');
 
+/* ---- 框选区域（只检测选中部分 = 放大局部，达到单张检测的精度）---- */
+function roiHint(msg) { const el = $('liveHint'); if (el) el.textContent = msg; }
+
+$('btnRoi').onclick = () => {
+  if (!live.running) { roiHint('先开启摄像头或抓取画面，再框选区域'); return; }
+  live.roiMode = !live.roiMode;
+  $('btnRoi').classList.toggle('on', live.roiMode);
+  roiHint(live.roiMode ? '在画面上拖出一个矩形（Esc 取消）' : '');
+};
+
+$('btnRoiClear').onclick = () => {
+  live.roi = null; live.roiMode = false;
+  $('btnRoiClear').hidden = true;
+  $('btnRoi').classList.remove('on');
+  roiHint('已清除框选区，恢复整幅画面');
+};
+
+// 显示坐标 → 源视频坐标
+function dispToVideo(ev) {
+  const r = $('overlay').getBoundingClientRect();
+  const sx = live.srcW / Math.max(1, r.width);
+  const sy = live.srcH / Math.max(1, r.height);
+  return { x: Math.max(0, Math.min(live.srcW, (ev.clientX - r.left) * sx)),
+           y: Math.max(0, Math.min(live.srcH, (ev.clientY - r.top) * sy)) };
+}
+
+$('overlay').addEventListener('pointerdown', (ev) => {
+  if (!live.roiMode || !live.running) return;
+  ev.preventDefault();
+  $('overlay').setPointerCapture(ev.pointerId);
+  const p0 = dispToVideo(ev);
+  live.dragStart = p0;
+  live.drag = { x: p0.x, y: p0.y, w: 0, h: 0 };
+});
+
+$('overlay').addEventListener('pointermove', (ev) => {
+  if (!live.roiMode || !live.dragStart) return;
+  const p1 = dispToVideo(ev);
+  const a = live.dragStart;
+  live.drag = {
+    x: Math.min(a.x, p1.x), y: Math.min(a.y, p1.y),
+    w: Math.abs(p1.x - a.x), h: Math.abs(p1.y - a.y),
+  };
+});
+
+$('overlay').addEventListener('pointerup', () => {
+  if (!live.drag) return;
+  const r = live.drag;
+  live.drag = null; live.dragStart = null;
+  if (r.w < 40 || r.h < 40) { roiHint('框太小，已忽略（至少 40×40 像素）'); return; }
+  live.roi = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) };
+  live.roiMode = false;
+  $('btnRoi').classList.remove('on');
+  $('btnRoiClear').hidden = false;
+  roiHint(`框选 ${live.roi.w}×${live.roi.h} —— 只检测该区域`);
+});
+
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && live.roiMode) {
+    live.roiMode = false; live.drag = null; live.dragStart = null;
+    $('btnRoi').classList.remove('on');
+    roiHint('已取消框选');
+  }
+});
+
 function liveLoop() {
   if (!live.running) return;
   if (!live.busy) captureOnce();
@@ -412,13 +484,23 @@ async function captureOnce() {
   const v = live.source || $('video');
   const vw = v.videoWidth || v.width, vh = v.videoHeight || v.height;
   if (!vw) return;
-  const scale = Math.min(1, live.maxDim / Math.max(vw, vh));
-  const w = Math.round(vw * scale), h = Math.round(vh * scale);
+  live.srcW = vw; live.srcH = vh;
+
+  const hi = $('liveHiRes') && $('liveHiRes').checked;
+  const roi = live.roi || { x: 0, y: 0, w: vw, h: vh };
+  const limit = hi ? Infinity : live.maxDim;
+  const scale = Math.min(1, limit / Math.max(roi.w, roi.h));
+  const w = Math.max(1, Math.round(roi.w * scale)), h = Math.max(1, Math.round(roi.h * scale));
+
   const cv = document.createElement('canvas');
   cv.width = w; cv.height = h;
-  cv.getContext('2d').drawImage(v, 0, 0, w, h);
+  cv.getContext('2d').drawImage(v, roi.x, roi.y, roi.w, roi.h, 0, 0, w, h);
 
-  const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.85));
+  // 记住映射关系，供把检测框画回整幅画面
+  live.sentOffset = { x: roi.x, y: roi.y };
+  live.sentRatio = roi.w / w;
+
+  const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', hi ? 0.95 : 0.85));
   if (!blob) return;
 
   live.busy = true;
@@ -428,8 +510,9 @@ async function captureOnce() {
   fd.append('iou', $('iouLive').value);
   if (!(CURRENT.has_per_class_conf && $('usePerClassLive').checked)) {
     fd.append('conf', $('confLive').value);
-  } else {
-    // 实时画面里缺陷占的像素少、分数偏低：按类别阈值时放宽到 0.6（与 Android 端一致）
+  } else if (!($('liveHiRes') && $('liveHiRes').checked)) {
+    // 普通模式：放宽到 0.6（画面里缺陷像素少、分数偏低）
+    // 高精度模式不加宽，完全按模型阈值 —— 与单张检测一致
     fd.append('conf_scale', '0.6');
   }
   try {
@@ -496,15 +579,35 @@ function renderOverlay() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, rect.width, rect.height);
 
+      // 检测结果是在「送检图」坐标里；先还原到源视频坐标，再映射到显示尺寸
+      const dScaleX = rect.width / Math.max(1, live.srcW);
+      const dScaleY = rect.height / Math.max(1, live.srcH);
+      const toX = (x) => (live.sentOffset.x + x * live.sentRatio) * dScaleX;
+      const toY = (y) => (live.sentOffset.y + y * live.sentRatio) * dScaleY;
+
+      // 框选区（已确认的 ROI + 正在拖拽的框）
+      const drawRoi = (r, dash) => {
+        const rx = r.x * dScaleX, ry = r.y * dScaleY;
+        const rw = r.w * dScaleX, rh = r.h * dScaleY;
+        ctx.save();
+        ctx.setLineDash(dash || []);
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rx, ry, rw, rh);
+        ctx.restore();
+      };
+      if (live.roi) drawRoi(live.roi, [8, 5]);
+      if (live.drag) drawRoi(live.drag, [4, 4]);
+
       if (live.sentW && live.boxes.length) {
-        const sx = rect.width / live.sentW, sy = rect.height / live.sentH;
+        const sx = 1, sy = 1;
         ctx.lineWidth = 2.5;
         ctx.font = '12px ui-monospace, monospace';
         ctx.textBaseline = 'bottom';
         live.boxes.forEach(d => {
           const col = COLORS[d.cls % COLORS.length];
-          const x1 = d.xyxy[0] * sx, y1 = d.xyxy[1] * sy;
-          const x2 = d.xyxy[2] * sx, y2 = d.xyxy[3] * sy;
+          const x1 = toX(d.xyxy[0]), y1 = toY(d.xyxy[1]);
+          const x2 = toX(d.xyxy[2]), y2 = toY(d.xyxy[3]);
           ctx.strokeStyle = col;
           ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
           const label = `${d.name} ${d.conf.toFixed(2)}`;

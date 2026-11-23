@@ -22,3 +22,8 @@ build_portable/
 tmp*.pem
 *.pem
 
+
+# 临时脚本/检查产物
+p33.js
+*.local.js
+
