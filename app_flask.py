@@ -450,19 +450,74 @@ def _lan_ip() -> str | None:
         s.close()
 
 
+def _can_bind(host: str, port: int) -> bool:
+    """试绑定一下，判断端口是否可用（WSAEACCES / 被占用都会失败）。"""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # 注意：Windows 上不要设 SO_REUSEADDR —— 它会允许重复绑定，
+        # 导致"端口被占用"也判成可用（历史上就是它让两个服务同时监听 8000）
+        s.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def _pick_port(host: str, preferred: int) -> tuple[int, bool]:
+    """优先用指定端口；不可用则依次尝试备选。返回 (端口, 是否就是首选)。"""
+    if _can_bind(host, preferred):
+        return preferred, True
+    for p in (8010, 8080, 8001, 8002, 8888, 9000, 9500, 7000):
+        if _can_bind(host, p):
+            return p, False
+    return preferred, False
+
+
+def _open_browser_later(url: str, delay: float = 1.5) -> None:
+    if os.environ.get("PCB_NO_BROWSER") == "1":
+        return
+
+    def _run():
+        time.sleep(delay)
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 if __name__ == "__main__":
     HOST = os.environ.get("PCB_HOST", "0.0.0.0")
-    PORT = int(os.environ.get("PCB_PORT", "8000"))
+    want = int(os.environ.get("PCB_PORT", "8000"))
+    PORT, is_preferred = _pick_port(HOST, want)
+
+    if not is_preferred:
+        print(f"[PCB] 端口 {want} 不可用 —— 可能被占用，或被系统保留"
+              f"（Hyper-V / WSL / Docker 会保留端口段）")
+        print(f"[PCB] 已自动改用 {PORT}")
+
+    url = f"http://127.0.0.1:{PORT}/"
     print(f"[PCB] 监听 {HOST}:{PORT}")
-    print(f"[PCB] 本机访问:   http://127.0.0.1:{PORT}/")
+    print(f"[PCB] 本机访问:   {url}")
     ip = _lan_ip()
     if ip and HOST == "0.0.0.0":
         print(f"[PCB] 局域网访问: http://{ip}:{PORT}/   (需防火墙放行 {PORT})")
+    print(f"[PCB] 浏览器未自动打开时，手动访问: {url}")
+
+    _open_browser_later(url)
+
     try:
         app.run(host=HOST, port=PORT, debug=False, threaded=True)
-    except OSError as ex:
+    except (OSError, SystemExit) as ex:
         print()
-        print(f"[PCB] 启动失败：端口 {PORT} 可能已被占用（{ex}）")
-        print(f"[PCB] 换个端口：set PCB_PORT=8001  然后重新运行")
-        print("[PCB] 或先查谁占用了端口：netstat -ano | findstr :%d" % PORT)
+        print(f"[PCB] 启动失败：端口 {PORT} 不可用（{ex}）")
+        print("[PCB] 排查命令：")
+        print(f"       netstat -ano | findstr :{PORT}")
+        print("       netsh int ipv4 show excludedportrange protocol=tcp")
+        print("[PCB] 换端口的办法：")
+        print("       set PCB_PORT=8010  &  重新双击 start.bat")
         raise SystemExit(1)

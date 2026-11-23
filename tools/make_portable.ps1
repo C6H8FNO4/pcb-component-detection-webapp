@@ -197,14 +197,14 @@ set "YOLO_CONFIG_DIR=%APP%\.ultralytics"
 set "TORCHINDUCTOR_CACHE_DIR=%APP%\.cache\torch"
 set "MPLCONFIGDIR=%APP%\.cache\mpl"
 set "PCB_HOST=0.0.0.0"
-set "PCB_PORT=8000"
+rem set "PCB_PORT=8010"   (端口被占用/保留时程序会自动换，这里可强制指定)
 echo ==========================================
 echo    PCB Defect Detection - portable
 echo ==========================================
 echo  Local : http://127.0.0.1:8000/
 echo  Stop  : close this window or press Ctrl+C
 echo.
-if not "%PCB_NO_BROWSER%"=="1" start "" /b "%PY%" "%APP%\open_browser.py" "http://127.0.0.1:8000/"
+rem 浏览器由 app_flask.py 自己按实际端口打开（端口可能被自动切换）
 "%PY%" "%APP%\app_flask.py"
 echo.
 echo Server stopped.
