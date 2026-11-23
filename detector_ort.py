@@ -98,7 +98,9 @@ class Detector:
         r.size = (w, h)
 
         # 1) letterbox 到 size×size
-        blob, scale, pad_x, pad_y = self._letterbox(img_bgr)
+        # 注意：变量名不能用 scale —— 会覆盖上面的阈值缩放参数（曾导致阈值被
+        # 悄悄乘上缩放比，比如 0.25 变成 0.125，于是框特别多）
+        blob, lb_scale, pad_x, pad_y = self._letterbox(img_bgr)
 
         # 2) 前向
         import time
@@ -126,10 +128,10 @@ class Detector:
             idx = np.nonzero(scores >= th)[0]
             if idx.size == 0:
                 continue
-            x1 = (cx[idx] - bw[idx] / 2 - pad_x) / scale
-            y1 = (cy[idx] - bh[idx] / 2 - pad_y) / scale
-            x2 = (cx[idx] + bw[idx] / 2 - pad_x) / scale
-            y2 = (cy[idx] + bh[idx] / 2 - pad_y) / scale
+            x1 = (cx[idx] - bw[idx] / 2 - pad_x) / lb_scale
+            y1 = (cy[idx] - bh[idx] / 2 - pad_y) / lb_scale
+            x2 = (cx[idx] + bw[idx] / 2 - pad_x) / lb_scale
+            y2 = (cy[idx] + bh[idx] / 2 - pad_y) / lb_scale
             for k, i in enumerate(idx):
                 cands.append((float(scores[i]), c,
                               float(np.clip(x1[k], 0, w - 1)), float(np.clip(y1[k], 0, h - 1)),
