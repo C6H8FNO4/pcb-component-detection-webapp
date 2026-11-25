@@ -138,7 +138,8 @@ jobs:
           - { slug: win-arm64-cpu,      os: windows-11-arm,    arch: arm64, backend: cpu,      ort: onnxruntime,           ext: zip,    preview: true  }
           # ---- macOS arm64 ----
           - { slug: mac-arm64-cpu,      os: macos-latest,      arch: arm64, backend: cpu,      ort: onnxruntime,           ext: tar.gz, preview: false }
-          - { slug: mac-arm64-coreml,   os: macos-latest,      arch: arm64, backend: coreml,   ort: onnxruntime,           ext: tar.gz, preview: false }
+          # CoreML 是 onnxruntime 内置的 provider，与 cpu 是同一个包，
+          # 不再单独构建（mac-arm64-cpu 的包里就带 CoreML 能力）。
           # ---- macOS Intel（macos-13 已退役，用 macos-15-intel）----
           - { slug: mac-x64-cpu,        os: macos-15-intel,    arch: x64,   backend: cpu,      ort: "onnxruntime==1.23.2", ext: tar.gz, preview: false }
     runs-on: ${{ matrix.os }}
