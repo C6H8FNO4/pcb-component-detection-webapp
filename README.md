@@ -203,7 +203,23 @@ docker run -d -p 8000:8000 --name pcb-web pcb-defect-web
 **打 tag 自动触发**：`git tag v1.0.1 && git push origin v1.0.1` →
 跑冒烟测试 → 打包 → 自动附到这个 tag 的 Release。
 
+### 构建矩阵
+
+| 系统 | 架构 | 后端 | 产物 |
+|---|---|---|---|
+| linux | x64 | cpu / cuda / rocm | `.tar.gz` |
+| linux | arm64 | cpu / cuda | `.tar.gz` |
+| windows | x64 | cpu / cuda / directml | `.zip` |
+| windows | arm64 | cpu | `.zip` |
+| macos | arm64 | cpu（含 CoreML） | `.tar.gz` |
+| macos | x64 | cpu（onnxruntime 1.23.2） | `.tar.gz` |
+
+- 后端包：`onnxruntime` / `onnxruntime-gpu`（CUDA）/ `onnxruntime-rocm`（AMD）/ `onnxruntime-directml`（Windows 上 AMD/Intel）
+- CUDA / ROCm 运行时**不随包分发**（数 GB + 授权限制），目标机需自备
+- 托管 runner 没有 GPU，GPU 版只验证「能装、能启动、模型能跑」，不验证 GPU 实际加速
+
 ### 任务划分
+
 
 | Job | 内容 |
 |---|---|
