@@ -227,7 +227,9 @@ jobs:
           CUDA / ROCm 运行时需目标机自备。
           NOTES
             sed -i.bak "s/__RUN__/$RUN_NUMBER/;s/__SHA__/${GITHUB_SHA:0:7}/" release-notes.md
-            gh release create "$TAG" --title "$TAG 便携版（全平台）" --notes-file release-notes.md $PRE
+            # 12 个任务并发创建同一个 release，后到的会 422；用 || true 让竞争无害
+            gh release create "$TAG" --title "$TAG 便携版（全平台）" --notes-file release-notes.md $PRE \
+              || echo "创建返回非 0（多任务并发时正常），继续上传资产"
           else
             echo "Release $TAG 已存在，追加/覆盖资产"
           fi
