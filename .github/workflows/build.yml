@@ -1,30 +1,26 @@
 name: build
 
-# 按「系统 × GPU 后端」矩阵构建：
-#   · 冒烟测试：Windows / Linux × 每个后端，确保模型能加载并推理
-#   · Windows 便携包：python-embed + 预装依赖 + 模型，解压即用
-#   · Docker 镜像：CPU 与 CUDA 两版（手动触发）
+# 矩阵构建：操作系统 × CPU 架构 × 推理后端
 #
-# 手动触发时可选后端，例如 "cpu,cu126,cu124"。
-# 打 tag（v*）会自动跑冒烟测试，并把便携包附到 GitHub Release。
+#   linux  x64    cpu / cuda / rocm
+#   linux  arm64  cpu / cuda            (预编译轮子存在；runner 为 public preview)
+#   win    x64    cpu / cuda / directml (AMD/Intel 走 DirectML)
+#   win    arm64  cpu                   (runner 为 public preview)
+#   mac    arm64  cpu / coreml
+#   mac    x64    cpu                   (onnxruntime 1.32 无 x64 macOS 轮子，锁定 1.23.2)
+#
+# 说明：CUDA / ROCm 运行时（数 GB）不随包分发，目标机需自备；
+#       CI runner 没有 GPU，因此 GPU 版只验证「能装包、能启动、模型能跑在 CPU 上」。
 
 on:
   workflow_dispatch:
     inputs:
-      backends:
-        description: 'PyTorch 后端，逗号分隔：cpu / cu128 / cu126 / cu124 / cu121'
-        required: true
-        default: 'cpu'
-      build_windows_portable:
-        description: '构建 Windows 便携包（CUDA 版体积可达 2–3 GB）'
-        type: boolean
-        default: true
-      build_docker:
-        description: '构建 Docker 镜像（CPU + CUDA）'
-        type: boolean
-        default: false
+      targets:
+        description: '要构建的目标 slug，逗号分隔（留空=全部）。例：linux-x64-cpu,win-x64-cuda'
+        required: false
+        default: ''
       release_tag:
-        description: '发布到的 Release tag（留空 = latest-build 滚动包，同一个 tag 反复覆盖）'
+        description: '发布到的 Release tag（留空 = latest-build 滚动包）'
         required: false
         default: ''
   push:
@@ -34,54 +30,19 @@ permissions:
   contents: write
 
 env:
-  # Windows runner 默认代码页是 cp1252，pip 读取 UTF-8 文件会崩；强制 UTF-8
   PYTHONUTF8: '1'
   PYTHONIOENCODING: 'utf-8'
 
 jobs:
-  # ---------------------------------------------------------------- 生成矩阵
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      backends: ${{ steps.m.outputs.backends }}
-      smoke_matrix: ${{ steps.m.outputs.smoke_matrix }}
-    steps:
-      - id: m
-        env:
-          RAW: ${{ github.event.inputs.backends }}
-        run: |
-          python3 - <<'PY'
-          import json, os
-
-          raw = (os.environ.get("RAW") or "cpu").replace(" ", "")
-          backends = [b for b in raw.split(",") if b]
-          if not backends:
-              backends = ["cpu"]
-
-          smoke = {"include": [
-              {"os": os_name, "backend": b}
-              for os_name in ("windows-latest", "ubuntu-latest")
-              for b in backends
-          ]}
-
-          path = os.environ["GITHUB_OUTPUT"]
-          with open(path, "a", encoding="utf-8") as f:
-              f.write("backends=" + json.dumps(backends) + "\n")
-              f.write("smoke_matrix=" + json.dumps(smoke) + "\n")
-
-          print("后端:", backends)
-          print("冒烟矩阵:", json.dumps(smoke, ensure_ascii=False))
-          PY
-
   # ---------------------------------------------------------------- 冒烟测试
   smoke:
-    needs: prepare
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.smoke_matrix) }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    name: smoke / ${{ matrix.os }} / ${{ matrix.backend }}
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    name: smoke / ${{ matrix.os }}
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
@@ -90,54 +51,101 @@ jobs:
           python-version: '3.11'
           cache: pip
 
-      - name: 安装 PyTorch（${{ matrix.backend }}）
+      - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --timeout 60 --retries 3 \
-            torch torchvision --index-url https://download.pytorch.org/whl/${{ matrix.backend }}
           python -m pip install --timeout 60 --retries 3 -r requirements.txt
 
-      - name: 获取模型（从 models 仓库的 Release 下载）
+      - name: 获取模型
         run: python tools/fetch_models.py
 
       - name: 冒烟测试
         run: |
-          python -c "import torch;print('torch',torch.__version__,'| cuda',torch.cuda.is_available())"
+          python -c "import onnxruntime as o;print('onnxruntime',o.__version__,'|',o.get_available_providers())"
           python tools/smoke_test.py
 
-  # ---------------------------------------------------------------- Windows 便携包
-  portable-windows:
-    needs: [prepare, smoke]
-    if: ${{ github.event_name == 'push' || inputs.build_windows_portable }}
-    runs-on: windows-latest
-    timeout-minutes: 120
+  # ---------------------------------------------------------------- 便携包矩阵
+  portable:
+    needs: smoke
+    if: ${{ always() && needs.smoke.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
-        backend: ${{ fromJSON(needs.prepare.outputs.backends) }}
-    name: portable / win64 / ${{ matrix.backend }}
+        include:
+          # ---- Linux x86_64 ----
+          - { slug: linux-x64-cpu,      os: ubuntu-latest,  arch: x64,   backend: cpu,      ort: onnxruntime,          ext: tar.gz, preview: false }
+          - { slug: linux-x64-cuda,     os: ubuntu-latest,  arch: x64,   backend: cuda,     ort: onnxruntime-gpu,      ext: tar.gz, preview: false }
+          - { slug: linux-x64-rocm,     os: ubuntu-latest,  arch: x64,   backend: rocm,     ort: onnxruntime-rocm,     ext: tar.gz, preview: false }
+          # ---- Linux arm64（runner 为 public preview）----
+          - { slug: linux-arm64-cpu,    os: ubuntu-24.04-arm, arch: arm64, backend: cpu,    ort: onnxruntime,          ext: tar.gz, preview: true }
+          - { slug: linux-arm64-cuda,   os: ubuntu-24.04-arm, arch: arm64, backend: cuda,   ort: onnxruntime-gpu,      ext: tar.gz, preview: true }
+          # ---- Windows x64 ----
+          - { slug: win-x64-cpu,        os: windows-latest, arch: amd64, backend: cpu,      ort: onnxruntime,          ext: zip,    preview: false }
+          - { slug: win-x64-cuda,       os: windows-latest, arch: amd64, backend: cuda,     ort: onnxruntime-gpu,      ext: zip,    preview: false }
+          - { slug: win-x64-directml,   os: windows-latest, arch: amd64, backend: directml, ort: onnxruntime-directml, ext: zip,    preview: false }
+          # ---- Windows arm64（preview）----
+          - { slug: win-arm64-cpu,      os: windows-11-arm, arch: arm64, backend: cpu,      ort: onnxruntime,          ext: zip,    preview: true }
+          # ---- macOS ----
+          - { slug: mac-arm64-cpu,      os: macos-latest,   arch: arm64, backend: cpu,      ort: onnxruntime,          ext: tar.gz, preview: false }
+          - { slug: mac-arm64-coreml,   os: macos-latest,   arch: arm64, backend: coreml,   ort: onnxruntime,          ext: tar.gz, preview: false }
+          - { slug: mac-x64-cpu,        os: macos-13,       arch: x64,   backend: cpu,      ort: "onnxruntime==1.23.2", ext: tar.gz, preview: true }
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.preview }}
+    name: portable / ${{ matrix.slug }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 
+      - name: 判断是否构建
+        id: gate
+        shell: bash
+        env:
+          TARGETS: ${{ github.event.inputs.targets }}
+          SLUG: ${{ matrix.slug }}
+        run: |
+          T="${TARGETS:-}"
+          if [ -z "$T" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          elif echo ",$T," | grep -q ",$SLUG,"; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "跳过 $SLUG（不在 targets 里）"
+          fi
+
       - uses: actions/setup-python@v7
+        if: steps.gate.outputs.go == 'true'
         with:
           python-version: '3.11'
 
-      - name: 打包便携版
+      - name: 构建便携包（Windows）
+        if: steps.gate.outputs.go == 'true' && startsWith(matrix.os, 'windows')
         shell: pwsh
         run: |
           ./tools/make_portable.ps1 `
-            -OutFile "dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip"
+            -Arch ${{ matrix.arch }} `
+            -OrtPackage "${{ matrix.ort }}" `
+            -OutFile "dist/pcb-webapp-portable-${{ matrix.slug }}.${{ matrix.ext }}"
+
+      - name: 构建便携包（Linux / macOS）
+        if: steps.gate.outputs.go == 'true' && !startsWith(matrix.os, 'windows')
+        shell: bash
+        run: |
+          bash tools/make_portable.sh \
+            --ort "${{ matrix.ort }}" \
+            --out "dist/pcb-webapp-portable-${{ matrix.slug }}.${{ matrix.ext }}"
 
       - name: 上传 artifact
+        if: steps.gate.outputs.go == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: portable-win64-${{ matrix.backend }}
-          path: dist/pcb-webapp-portable-win64-${{ matrix.backend }}.zip
+          name: portable-${{ matrix.slug }}
+          path: dist/pcb-webapp-portable-${{ matrix.slug }}.*
           retention-days: 3
           if-no-files-found: error
 
       - name: 发布到 Release
+        if: steps.gate.outputs.go == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -145,77 +153,17 @@ jobs:
           EVENT: ${{ github.event_name }}
           RUN_NUMBER: ${{ github.run_number }}
           WANT_TAG: ${{ github.event.inputs.release_tag }}
-          BACKEND: ${{ matrix.backend }}
+          SLUG: ${{ matrix.slug }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "push" ]; then
-            TAG="$REF_NAME"
-            PRE=""
-            TITLE="$REF_NAME 便携版"
-            NOTES="由 tag \`$REF_NAME\` 构建（commit ${GITHUB_SHA:0:7}）。"
+            TAG="$REF_NAME"; PRE=""; TITLE="$REF_NAME 便携版"
           elif [ -n "${WANT_TAG:-}" ]; then
-            TAG="$WANT_TAG"
-            PRE=""
-            TITLE="$WANT_TAG 便携版"
-            NOTES="由 Actions run #$RUN_NUMBER 构建（commit ${GITHUB_SHA:0:7}）。"
+            TAG="$WANT_TAG"; PRE=""; TITLE="$WANT_TAG 便携版"
           else
-            TAG="latest-build"
-            PRE="--prerelease"
-            TITLE="latest-build · 滚动构建"
-            NOTES="手动触发的最新构建，每次运行覆盖同名文件。run #$RUN_NUMBER（commit ${GITHUB_SHA:0:7}）。"
+            TAG="latest-build"; PRE="--prerelease"; TITLE="latest-build · 滚动构建"
           fi
-
-          echo "发布到 Release: $TAG"
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "$TITLE" --notes "$NOTES" $PRE
-          fi
-
-          FILE="dist/pcb-webapp-portable-win64-${BACKEND}.zip"
-          ls -lh "$FILE"
-          gh release upload "$TAG" "$FILE" --clobber
-          echo "已上传: $(basename "$FILE")"
-
-  # ---------------------------------------------------------------- Docker 镜像
-  docker:
-    needs: [prepare]
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_docker }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: cpu
-            dockerfile: Dockerfile
-          - name: cu124
-            dockerfile: Dockerfile.gpu
-    name: docker / ${{ matrix.name }}
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: docker/setup-buildx-action@v4
-
-      - name: 构建镜像
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          load: true
-          push: false
-          tags: pcb-webapp:${{ matrix.name }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-
-      - name: 导出镜像为 tar.gz
-        run: |
-          docker images pcb-webapp:${{ matrix.name }}
-          docker save pcb-webapp:${{ matrix.name }} | gzip -9 > pcb-webapp-${{ matrix.name }}.tar.gz
-          ls -lh pcb-webapp-${{ matrix.name }}.tar.gz
-
-      - name: 上传 artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: docker-${{ matrix.name }}
-          path: pcb-webapp-${{ matrix.name }}.tar.gz
-          retention-days: 3
-          if-no-files-found: error
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TITLE" --notes "由 Actions run #$RUN_NUMBER 构建（commit ${GITHUB_SHA:0:7}）。" $PRE
+          ls -lh dist/
+          gh release upload "$TAG" dist/pcb-webapp-portable-${SLUG}.* --clobber

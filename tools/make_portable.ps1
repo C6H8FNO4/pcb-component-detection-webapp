@@ -39,6 +39,7 @@ param(
     [string]$WorkDir = "build_portable",
     [string]$Venv = "",
     [string]$SitePackages = "",
+    [string]$OrtPackage = "onnxruntime",
     [switch]$SkipDeps
 )
 
@@ -52,9 +53,17 @@ function Die($m)  { Write-Host "`n[失败] $m" -ForegroundColor Red; exit 1 }
 
 # python-embed 版本表（embeddable 只到 3.11.9 / 3.10.11 这些末端版本）
 $EMBED = @{
-    "3.12" = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
-    "3.11" = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
-    "3.10" = "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip"
+    "3.12" = @{
+        amd64 = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
+        arm64 = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-arm64.zip"
+    }
+    "3.11" = @{
+        amd64 = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
+        arm64 = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-arm64.zip"
+    }
+    "3.10" = @{
+        amd64 = "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip"
+    }
 }
 
 if (-not $OutFile) { $OutFile = Join-Path $Root "dist\pcb-webapp-portable-win64.zip" }
@@ -88,6 +97,8 @@ if (-not $SitePackages -and -not $Python -and -not ($venvPyMaybe -and (Test-Path
 if (-not $PyVer) { Die "无法确定 Python 版本" }
 Ok "Python $PyVer"
 if (-not $EMBED.ContainsKey($PyVer)) { Die "没有对应的 python-embed 版本：$PyVer" }
+$embedUrl = $EMBED[$PyVer][$Arch]
+if (-not $embedUrl) { Die "Python $PyVer 没有 $Arch 版本的 python-embed（arm64 请用 3.11/3.12）" }
 
 # ---------------------------------------------------------------- 2. venv + 依赖
 $work = Join-Path $Root $WorkDir
@@ -115,6 +126,15 @@ if ($SitePackages) {
     & $venvPy -m pip install -q --prefer-binary --timeout 60 --retries 3 -r (Join-Path $Root "requirements.txt")
     if ($LASTEXITCODE -ne 0) { Die "依赖安装失败" }
     Ok "依赖安装完成"
+
+    # requirements.txt 里是 CPU 版 onnxruntime；GPU / DirectML 变体需要替换
+    if ($OrtPackage -ne "onnxruntime") {
+        Write-Host "    替换推理后端为 $OrtPackage …" -ForegroundColor DarkGray
+        & $venvPy -m pip uninstall -y -q onnxruntime 2>&1 | Out-Null
+        & $venvPy -m pip install -q --prefer-binary --timeout 120 --retries 3 $OrtPackage
+        if ($LASTEXITCODE -ne 0) { Die "$OrtPackage 安装失败（该平台可能没有这个包）" }
+        Ok "$OrtPackage 安装完成"
+    }
 }
 
 # ---------------------------------------------------------------- 3. 组装目录
@@ -125,7 +145,7 @@ New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 
 $embedZip = Join-Path $work "python-embed.zip"
 if (-not (Test-Path $embedZip)) {
-    Invoke-WebRequest -Uri $EMBED[$PyVer] -OutFile $embedZip -UseBasicParsing
+    Invoke-WebRequest -Uri $embedUrl -OutFile $embedZip -UseBasicParsing
 }
 $pyDir = Join-Path $pkg "python"
 New-Item -ItemType Directory -Force -Path $pyDir | Out-Null
