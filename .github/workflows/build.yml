@@ -194,18 +194,33 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+  # ---------------------------------------------------------------- 统一发布
+  # 12 个任务并发写同一个 Release 会互相踩（422 / 500），改为：
+  # 矩阵只上传 artifact，这里串行汇总后一次性发布。
+  publish:
+    needs: [prepare, portable]
+    if: ${{ always() && needs.portable.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    name: publish / ${{ needs.prepare.outputs.tag }}
+    steps:
+      - name: 汇总所有产物
+        uses: actions/download-artifact@v5
+        with:
+          path: dist
+          pattern: portable-*
+          merge-multiple: true
+
       - name: 发布到 Release
-        if: steps.gate.outputs.go == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.prepare.outputs.tag }}
-          SLUG: ${{ matrix.slug }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
-          echo "发布到 $TAG"
+          echo "=== 待发布文件 ==="
+          ls -lh dist || { echo "没有产物，跳过发布"; exit 0; }
           PRE=""
           [ "$TAG" = "latest-build" ] && PRE="--prerelease"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
@@ -227,11 +242,8 @@ jobs:
           CUDA / ROCm 运行时需目标机自备。
           NOTES
             sed -i.bak "s/__RUN__/$RUN_NUMBER/;s/__SHA__/${GITHUB_SHA:0:7}/" release-notes.md
-            # 12 个任务并发创建同一个 release，后到的会 422；用 || true 让竞争无害
-            gh release create "$TAG" --title "$TAG 便携版（全平台）" --notes-file release-notes.md $PRE \
-              || echo "创建返回非 0（多任务并发时正常），继续上传资产"
-          else
-            echo "Release $TAG 已存在，追加/覆盖资产"
+            gh release create "$TAG" --title "$TAG 便携版（全平台）" --notes-file release-notes.md $PRE || true
           fi
-          ls -lh dist/
-          gh release upload "$TAG" dist/pcb-webapp-portable-${SLUG}.* --clobber
+          gh release upload "$TAG" dist/* --clobber
+          echo "=== 发布完成 ==="
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \((.size/1048576*10|round)/10) MiB"'
