@@ -97,6 +97,9 @@ jobs:
             torch torchvision --index-url https://download.pytorch.org/whl/${{ matrix.backend }}
           python -m pip install --timeout 60 --retries 3 -r requirements.txt
 
+      - name: 获取模型（从 models 仓库的 Release 下载）
+        run: python tools/fetch_models.py
+
       - name: 冒烟测试
         run: |
           python -c "import torch;print('torch',torch.__version__,'| cuda',torch.cuda.is_available())"
