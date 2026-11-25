@@ -40,6 +40,7 @@ param(
     [string]$Venv = "",
     [string]$SitePackages = "",
     [string]$OrtPackage = "onnxruntime",
+    [ValidateSet("amd64", "arm64")][string]$Arch = "amd64",
     [switch]$SkipDeps
 )
 
