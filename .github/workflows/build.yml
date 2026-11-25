@@ -3,24 +3,27 @@ name: build
 # 矩阵构建：操作系统 × CPU 架构 × 推理后端
 #
 #   linux  x64    cpu / cuda / rocm
-#   linux  arm64  cpu / cuda            (预编译轮子存在；runner 为 public preview)
-#   win    x64    cpu / cuda / directml (AMD/Intel 走 DirectML)
-#   win    arm64  cpu                   (runner 为 public preview)
-#   mac    arm64  cpu / coreml
-#   mac    x64    cpu                   (onnxruntime 1.32 无 x64 macOS 轮子，锁定 1.23.2)
+#   linux  arm64  cpu / cuda
+#   windows x64   cpu / cuda / directml (AMD/Intel 走 DirectML)
+#   windows arm64 cpu
+#   macos  arm64  cpu / coreml
+#   macos  x64    cpu           (onnxruntime 1.32 无 x64 macOS 轮子，锁定 1.23.2)
 #
-# 说明：CUDA / ROCm 运行时（数 GB）不随包分发，目标机需自备；
-#       CI runner 没有 GPU，因此 GPU 版只验证「能装包、能启动、模型能跑在 CPU 上」。
+# 默认行为（不填 targets）：构建全部目标，并全部上传到 Release。
+# Release 版本号：默认取最新的正式版本 vX.Y.Z 并把第三位 +1。
+#
+# 注意：CUDA / ROCm 运行时（数 GB）不随包分发，目标机需自备；
+#       托管 runner 没有 GPU，GPU 版只验证「能装、能启动、模型能跑在 CPU》」。
 
 on:
   workflow_dispatch:
     inputs:
       targets:
-        description: '要构建的目标 slug，逗号分隔（留空=全部）。例：linux-x64-cpu,win-x64-cuda'
+        description: '只构建指定 slug（逗号分隔，留空=全部）'
         required: false
         default: ''
       release_tag:
-        description: '发布到的 Release tag（留空 = latest-build 滚动包）'
+        description: '指定 Release tag（留空=自动把最新正式版第三位 +1）'
         required: false
         default: ''
   push:
@@ -34,6 +37,47 @@ env:
   PYTHONIOENCODING: 'utf-8'
 
 jobs:
+  # ---------------------------------------------------------------- 计算版本号
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - id: v
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          WANT: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ]; then
+            echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "使用 tag 触发：$REF_NAME"
+            exit 0
+          fi
+          if [ -n "${WANT:-}" ]; then
+            echo "tag=$WANT" >> "$GITHUB_OUTPUT"
+            echo "使用指定版本：$WANT"
+            exit 0
+          fi
+          # 取最新正式版本（非预发布、形如 vX.Y.Z），第三位 +1
+          LATEST=$(gh release list --limit 100 --json tagName,isPrerelease \
+            --jq '[.[] | select(.isPrerelease == false) | .tagName
+                   | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | first // ""')
+          if [ -z "$LATEST" ]; then
+            NEXT="v1.0.0"
+          else
+            MAJ=$(echo "$LATEST" | cut -d. -f1 | tr -d 'v')
+            MIN=$(echo "$LATEST" | cut -d. -f2)
+            PAT=$(echo "$LATEST" | cut -d. -f3)
+            NEXT="v${MAJ}.${MIN}.$((PAT + 1))"
+          fi
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "最新正式版：${LATEST:-（无）} → 本次发布：$NEXT"
+
   # ---------------------------------------------------------------- 冒烟测试
   smoke:
     runs-on: ${{ matrix.os }}
@@ -66,31 +110,32 @@ jobs:
 
   # ---------------------------------------------------------------- 便携包矩阵
   portable:
-    needs: smoke
+    needs: [prepare, smoke]
     if: ${{ always() && needs.smoke.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # ---- Linux x86_64 ----
-          - { slug: linux-x64-cpu,      os: ubuntu-latest,  arch: x64,   backend: cpu,      ort: onnxruntime,          ext: tar.gz, preview: false }
-          - { slug: linux-x64-cuda,     os: ubuntu-latest,  arch: x64,   backend: cuda,     ort: onnxruntime-gpu,      ext: tar.gz, preview: false }
-          - { slug: linux-x64-rocm,     os: ubuntu-latest,  arch: x64,   backend: rocm,     ort: onnxruntime-rocm,     ext: tar.gz, preview: false }
-          # ---- Linux arm64（runner 为 public preview）----
-          - { slug: linux-arm64-cpu,    os: ubuntu-24.04-arm, arch: arm64, backend: cpu,    ort: onnxruntime,          ext: tar.gz, preview: true }
-          - { slug: linux-arm64-cuda,   os: ubuntu-24.04-arm, arch: arm64, backend: cuda,   ort: onnxruntime-gpu,      ext: tar.gz, preview: true }
+          - { slug: linux-x64-cpu,      os: ubuntu-latest,     arch: x64,   backend: cpu,      ort: onnxruntime,           ext: tar.gz, preview: false }
+          - { slug: linux-x64-cuda,     os: ubuntu-latest,     arch: x64,   backend: cuda,     ort: onnxruntime-gpu,       ext: tar.gz, preview: false }
+          - { slug: linux-x64-rocm,     os: ubuntu-latest,     arch: x64,   backend: rocm,     ort: onnxruntime-rocm,      ext: tar.gz, preview: false }
+          # ---- Linux arm64 ----
+          - { slug: linux-arm64-cpu,    os: ubuntu-24.04-arm,  arch: arm64, backend: cpu,      ort: onnxruntime,           ext: tar.gz, preview: true  }
+          - { slug: linux-arm64-cuda,   os: ubuntu-24.04-arm,  arch: arm64, backend: cuda,     ort: onnxruntime-gpu,       ext: tar.gz, preview: true  }
           # ---- Windows x64 ----
-          - { slug: win-x64-cpu,        os: windows-latest, arch: amd64, backend: cpu,      ort: onnxruntime,          ext: zip,    preview: false }
-          - { slug: win-x64-cuda,       os: windows-latest, arch: amd64, backend: cuda,     ort: onnxruntime-gpu,      ext: zip,    preview: false }
-          - { slug: win-x64-directml,   os: windows-latest, arch: amd64, backend: directml, ort: onnxruntime-directml, ext: zip,    preview: false }
-          # ---- Windows arm64（preview）----
-          - { slug: win-arm64-cpu,      os: windows-11-arm, arch: arm64, backend: cpu,      ort: onnxruntime,          ext: zip,    preview: true }
-          # ---- macOS ----
-          - { slug: mac-arm64-cpu,      os: macos-latest,   arch: arm64, backend: cpu,      ort: onnxruntime,          ext: tar.gz, preview: false }
-          - { slug: mac-arm64-coreml,   os: macos-latest,   arch: arm64, backend: coreml,   ort: onnxruntime,          ext: tar.gz, preview: false }
-          - { slug: mac-x64-cpu,        os: macos-13,       arch: x64,   backend: cpu,      ort: "onnxruntime==1.23.2", ext: tar.gz, preview: true }
+          - { slug: win-x64-cpu,        os: windows-latest,    arch: amd64, backend: cpu,      ort: onnxruntime,           ext: zip,    preview: false }
+          - { slug: win-x64-cuda,       os: windows-latest,    arch: amd64, backend: cuda,     ort: onnxruntime-gpu,       ext: zip,    preview: false }
+          - { slug: win-x64-directml,   os: windows-latest,    arch: amd64, backend: directml, ort: onnxruntime-directml,  ext: zip,    preview: false }
+          # ---- Windows arm64 ----
+          - { slug: win-arm64-cpu,      os: windows-11-arm,    arch: arm64, backend: cpu,      ort: onnxruntime,           ext: zip,    preview: true  }
+          # ---- macOS arm64 ----
+          - { slug: mac-arm64-cpu,      os: macos-latest,      arch: arm64, backend: cpu,      ort: onnxruntime,           ext: tar.gz, preview: false }
+          - { slug: mac-arm64-coreml,   os: macos-latest,      arch: arm64, backend: coreml,   ort: onnxruntime,           ext: tar.gz, preview: false }
+          # ---- macOS Intel（macos-13 已退役，用 macos-15-intel）----
+          - { slug: mac-x64-cpu,        os: macos-15-intel,    arch: x64,   backend: cpu,      ort: "onnxruntime==1.23.2", ext: tar.gz, preview: false }
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.preview }}
+    continue-on-error: false
     name: portable / ${{ matrix.slug }}
     timeout-minutes: 90
     steps:
@@ -104,9 +149,7 @@ jobs:
           SLUG: ${{ matrix.slug }}
         run: |
           T="${TARGETS:-}"
-          if [ -z "$T" ]; then
-            echo "go=true" >> "$GITHUB_OUTPUT"
-          elif echo ",$T," | grep -q ",$SLUG,"; then
+          if [ -z "$T" ] || echo ",$T," | grep -q ",$SLUG,"; then
             echo "go=true" >> "$GITHUB_OUTPUT"
           else
             echo "go=false" >> "$GITHUB_OUTPUT"
@@ -149,21 +192,31 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REF_NAME: ${{ github.ref_name }}
-          EVENT: ${{ github.event_name }}
-          RUN_NUMBER: ${{ github.run_number }}
-          WANT_TAG: ${{ github.event.inputs.release_tag }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
           SLUG: ${{ matrix.slug }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = "push" ]; then
-            TAG="$REF_NAME"; PRE=""; TITLE="$REF_NAME 便携版"
-          elif [ -n "${WANT_TAG:-}" ]; then
-            TAG="$WANT_TAG"; PRE=""; TITLE="$WANT_TAG 便携版"
+          echo "发布到 $TAG"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "$TAG 便携版（全平台）" \
+              --notes "由 Actions run #$RUN_NUMBER 构建（commit ${GITHUB_SHA:0:7}）。
+
+包含各平台/架构/后端的便携包：
+- linux-x64: cpu / cuda / rocm
+- linux-arm64: cpu / cuda
+- win-x64: cpu / cuda / directml
+- win-arm64: cpu
+- mac-arm64: cpu / coreml
+- mac-x64: cpu（onnxruntime 1.23.2）
+
+解压后：Windows 双击 start.bat，Linux/macOS 执行 ./start.sh。
+CUDA / ROCm 运行时需目标机自备。" \
+              --latest
           else
-            TAG="latest-build"; PRE="--prerelease"; TITLE="latest-build · 滚动构建"
+            echo "Release $TAG 已存在，追加/覆盖资产"
           fi
-          gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --title "$TITLE" --notes "由 Actions run #$RUN_NUMBER 构建（commit ${GITHUB_SHA:0:7}）。" $PRE
           ls -lh dist/
           gh release upload "$TAG" dist/pcb-webapp-portable-${SLUG}.* --clobber
