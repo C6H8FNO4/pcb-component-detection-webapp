@@ -51,6 +51,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
           WANT: ${{ github.event.inputs.release_tag }}
+          TARGETS: ${{ github.event.inputs.targets }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "push" ]; then
@@ -61,6 +62,12 @@ jobs:
           if [ -n "${WANT:-}" ]; then
             echo "tag=$WANT" >> "$GITHUB_OUTPUT"
             echo "使用指定版本：$WANT"
+            exit 0
+          fi
+          # 局部构建（指定了 targets）不占用正式版本号，统一发到滚动预发布
+          if [ -n "${TARGETS:-}" ]; then
+            echo "tag=latest-build" >> "$GITHUB_OUTPUT"
+            echo "局部构建（targets=$TARGETS）→ latest-build，不升版本号"
             exit 0
           fi
           # 取最新正式版本（非预发布、形如 vX.Y.Z），第三位 +1
@@ -199,6 +206,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "发布到 $TAG"
+          PRE=""
+          [ "$TAG" = "latest-build" ] && PRE="--prerelease"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             cat > release-notes.md <<'NOTES'
           由 Actions run #__RUN__ 构建（commit __SHA__）。
@@ -218,7 +227,7 @@ jobs:
           CUDA / ROCm 运行时需目标机自备。
           NOTES
             sed -i.bak "s/__RUN__/$RUN_NUMBER/;s/__SHA__/${GITHUB_SHA:0:7}/" release-notes.md
-            gh release create "$TAG" --title "$TAG 便携版（全平台）" --notes-file release-notes.md --latest
+            gh release create "$TAG" --title "$TAG 便携版（全平台）" --notes-file release-notes.md $PRE
           else
             echo "Release $TAG 已存在，追加/覆盖资产"
           fi
