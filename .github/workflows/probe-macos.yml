@@ -1,0 +1,18 @@
+name: probe-macos
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15, macos-14, macos-13, macos-15-intel, macos-14-large]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    steps:
+      - name: 系统信息
+        run: |
+          sw_vers
+          uname -m
+          echo "runner: $RUNNER_OS / $RUNNER_ARCH / $RUNNER_NAME"
