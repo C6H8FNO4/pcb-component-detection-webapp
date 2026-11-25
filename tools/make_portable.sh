@@ -76,7 +76,7 @@ cyan "确保模型就绪"
 "$PKG/python/bin/python3" tools/fetch_models.py || die "模型下载失败"
 
 # ---------------------------------------------------------------- 3. 依赖
-cyan "安装依赖（$ORT_PKG）"
+cyan "安装依赖（${ORT_PKG}）"
 PIP="$PKG/python/bin/python3 -m pip"
 $PIP install --upgrade pip || die "pip 升级失败"
 # requirements.txt 里含 CPU 版 onnxruntime；先过滤掉，由 --ort 指定的包统一安装
