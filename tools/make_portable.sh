@@ -78,14 +78,15 @@ cyan "确保模型就绪"
 # ---------------------------------------------------------------- 3. 依赖
 cyan "安装依赖（$ORT_PKG）"
 PIP="$PKG/python/bin/python3 -m pip"
-$PIP install --quiet --upgrade pip
-# requirements.txt 里含 CPU 版 onnxruntime；这里先过滤掉它，
-# 由 --ort 指定的包统一安装（macOS x64 等平台必须锁旧版本时尤其重要）
-REQ_TMP="$(mktemp)"
-grep -viE '^\s*onnxruntime\s*(==|>=|<=|<|>|~=|$)' requirements.txt > "$REQ_TMP" || true
-$PIP install --quiet --prefer-binary --timeout 60 --retries 3 -r "$REQ_TMP"
-rm -f "$REQ_TMP"
-$PIP install --quiet --prefer-binary --timeout 120 --retries 3 "$ORT_PKG" \
+$PIP install --upgrade pip || die "pip 升级失败"
+# requirements.txt 里含 CPU 版 onnxruntime；先过滤掉，由 --ort 指定的包统一安装
+# （macOS x64 需要锁旧版本时尤其重要）。用 awk 而不是 grep -E，
+# 因为 macOS 自带 BSD grep 不支持 \s。
+REQ_TMP="$ROOT/$WORK/requirements.noort.txt"
+awk 'BEGIN{IGNORECASE=1} !/^[[:space:]]*onnxruntime([[:space:]]|=|$)/' requirements.txt > "$REQ_TMP"
+echo "---- 过滤后的依赖 ----"; cat "$REQ_TMP"; echo "---------------------"
+$PIP install --prefer-binary --timeout 60 --retries 3 -r "$REQ_TMP" || die "依赖安装失败"
+$PIP install --prefer-binary --timeout 120 --retries 3 "$ORT_PKG" \
   || die "$ORT_PKG 安装失败（该平台可能没有这个包）"
 # 清理缓存与编译产物，压缩体积
 $PIP cache purge >/dev/null 2>&1 || true
