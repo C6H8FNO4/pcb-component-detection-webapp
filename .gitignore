@@ -27,3 +27,7 @@ tmp*.pem
 p33.js
 *.local.js
 
+
+# 模型 ONNX 不再入库，统一从 pcb-component-detection-models 的 Release 下载
+models/*.onnx
+

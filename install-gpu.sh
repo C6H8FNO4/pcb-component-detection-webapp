@@ -97,6 +97,9 @@ print("    providers   :", ", ".join(prov))
 print("    cuda 可用   :", "CUDAExecutionProvider" in prov)
 PY
 
+cyan "获取模型权重（从 models 仓库下载，约 230 MB）"
+"$VPY" tools/fetch_models.py || warn "模型未就绪，页面会提示缺少模型"
+
 cyan "检查模型权重"
 for f in solder_yolo26m_800.onnx bare_yolo26s_1024.onnx; do
   if [ -f "models/$f" ]; then ok "$f ($(du -h "models/$f" | cut -f1))"; else warn "缺少 models/$f"; fi

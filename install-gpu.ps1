@@ -178,6 +178,10 @@ if ($useGpu -and (($rc -join "`n") -notmatch "cuda 可用\s*:\s*True")) {
 } elseif ($useGpu) { Ok "GPU 推理可用" }
 
 # ---------------------------------------------------------------- 7. 模型
+Step "获取模型权重（从 models 仓库下载，约 230 MB）"
+& $venvPy (Join-Path $PSScriptRoot "tools\fetch_models.py")
+if ($LASTEXITCODE -ne 0) { Warn2 "模型未就绪，页面会提示缺少模型" }
+
 Step "检查模型权重"
 $need = @{
     "solder_yolo26m_800.onnx" = "焊接缺陷 9 类 (imgsz 800)"

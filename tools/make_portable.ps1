@@ -168,6 +168,22 @@ if ($LASTEXITCODE -ge 8) { Die "复制 site-packages 失败 (robocopy $LASTEXITC
 Get-ChildItem $dstSp -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 Ok ("site-packages {0:N0} MB" -f ((Get-ChildItem $dstSp -Recurse -File | Measure-Object Length -Sum).Sum / 1MB))
 
+# --- 确保模型就绪（ONNX 不入库，统一从 models 仓库的 Release 下载）---
+Step "确保模型就绪"
+$needModels = @("solder_yolo26m_800.onnx", "bare_yolo26s_1024.onnx", "seg_yolov8m_pcb.onnx")
+$missingModels = @($needModels | Where-Object { -not (Test-Path (Join-Path $Root "models\$_")) })
+if ($missingModels.Count -gt 0) {
+    Write-Host "    缺少: $($missingModels -join ', ')，开始下载…" -ForegroundColor DarkGray
+    $fetchExe = $null; $fetchArgs = @()
+    if (Test-Path $venvPy) { $fetchExe = $venvPy }
+    elseif (Get-Command python -ErrorAction SilentlyContinue) { $fetchExe = "python" }
+    elseif (Get-Command py -ErrorAction SilentlyContinue) { $fetchExe = "py"; $fetchArgs = @("-3") }
+    if (-not $fetchExe) { Die "缺模型且找不到 Python，请手动运行 tools\fetch_models.py" }
+    & $fetchExe @fetchArgs (Join-Path $Root "tools\fetch_models.py")
+    if ($LASTEXITCODE -ne 0) { Die "模型下载失败，见上方打印的下载地址" }
+}
+Ok "模型齐全"
+
 # 复制应用文件
 $appDir = Join-Path $pkg "app"
 New-Item -ItemType Directory -Force -Path $appDir | Out-Null

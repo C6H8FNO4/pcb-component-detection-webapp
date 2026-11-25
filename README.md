@@ -102,12 +102,21 @@ curl -X POST http://127.0.0.1:8000/api/predict \
 
 ## 模型与阈值
 
+模型权重**不在本仓库**（单文件超 100 MB + 体积原因），统一托管在
+[pcb-component-detection-models](https://github.com/C6H8FNO4/pcb-component-detection-models/releases) 的 Release：
+
+```bash
+python tools/fetch_models.py        # 缺什么下什么（安装脚本与打包脚本会自动调用）
+python tools/fetch_models.py --list # 看清单
 ```
-models/
-├─ solder_yolo26m_800.onnx    78 MB   9 类，imgsz 800
-├─ bare_yolo26s_1024.onnx     37 MB   7 类，imgsz 1024
-├─ models.json                       展示名与逐类阈值
-└─ README.md                         权重来源与导出方法
+
+```
+models/                               ← 运行前由 fetch_models.py 填好
+├─ solder_yolo26m_800.onnx    81.8 MB  fp32  9 类，imgsz 800
+├─ bare_yolo26s_1024.onnx     38.4 MB  fp32  7 类，imgsz 1024
+├─ seg_yolov8m_pcb.onnx      109.1 MB  fp32  4 类，imgsz 640
+├─ models.json                        展示名与逐类阈值（随仓库提交）
+└─ README.md                          权重来源与导出方法
 ```
 
 逐类阈值来自各自的模型卡（val 上 F1 最优点）：
