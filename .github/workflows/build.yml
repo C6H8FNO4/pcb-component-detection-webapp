@@ -200,21 +200,25 @@ jobs:
           set -euo pipefail
           echo "发布到 $TAG"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" \
-              --title "$TAG 便携版（全平台）" \
-              --notes "由 Actions run #$RUN_NUMBER 构建（commit ${GITHUB_SHA:0:7}）。
+            cat > release-notes.md <<'NOTES'
+          由 Actions run #__RUN__ 构建（commit __SHA__）。
 
-包含各平台/架构/后端的便携包：
-- linux-x64: cpu / cuda / rocm
-- linux-arm64: cpu / cuda
-- win-x64: cpu / cuda / directml
-- win-arm64: cpu
-- mac-arm64: cpu / coreml
-- mac-x64: cpu（onnxruntime 1.23.2）
+          资产命名：pcb-webapp-portable-<系统>-<架构>-<后端>.zip|tar.gz
 
-解压后：Windows 双击 start.bat，Linux/macOS 执行 ./start.sh。
-CUDA / ROCm 运行时需目标机自备。" \
-              --latest
+          | 系统 | 架构 | 后端 |
+          | --- | --- | --- |
+          | linux | x64 | cpu / cuda / rocm |
+          | linux | arm64 | cpu / cuda |
+          | windows | x64 | cpu / cuda / directml |
+          | windows | arm64 | cpu |
+          | macos | arm64 | cpu / coreml |
+          | macos | x64 | cpu（onnxruntime 1.23.2） |
+
+          解压后：Windows 双击 start.bat，Linux/macOS 执行 ./start.sh。
+          CUDA / ROCm 运行时需目标机自备。
+          NOTES
+            sed -i.bak "s/__RUN__/$RUN_NUMBER/;s/__SHA__/${GITHUB_SHA:0:7}/" release-notes.md
+            gh release create "$TAG" --title "$TAG 便携版（全平台）" --notes-file release-notes.md --latest
           else
             echo "Release $TAG 已存在，追加/覆盖资产"
           fi
